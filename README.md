@@ -1,36 +1,91 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TenderOne — منصة المناقصات الذكية
 
-## Getting Started
+منصة SaaS عربية متعددة الشركات لتحليل المناقصات وتجهيز ملفاتها باحترافية، ومساعدة الشركات على:
 
-First, run the development server:
+- تصفح المناقصات وتصنيفها وتصفية حالتها
+- تحليل دفاتر الشروط (PDF) بشكل مستقل مع Checklist
+- إنشاء ملف تعريف الشركة بعدة قوالب ولغات
+- شراء نماذج احترافية جاهزة
+- الدفع عبر تحويل بنكي ثم تفعيل الخدمة بعد موافقة الإدارة
+
+كل خدمة مستقلة في الاستخدام والصلاحيات (`entitlements`).
+
+## التقنية
+
+- Next.js (App Router) + TypeScript + Tailwind
+- PostgreSQL عبر Neon / Vercel Postgres + Drizzle ORM
+- Vercel Blob للرفع المباشر للملفات الكبيرة
+- OpenAI Responses API لتحليل PDF
+- استضافة مستهدفة: **Vercel**
+
+## التشغيل المحلي
+
+1. انسخ البيئة:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. عبّئ القيم:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `DATABASE_URL`
+- `AUTH_SECRET`
+- `BLOB_READ_WRITE_TOKEN` (اختياري محلياً)
+- `OPENAI_API_KEY` (اختياري؛ بدونها يعمل تحليل تجريبي)
+- `NEXT_PUBLIC_APP_URL=http://localhost:3000`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+3. ثبّت الاعتماديات وطبّق المخطط:
 
-## Learn More
+```bash
+npm install
+npm run db:push
+npm run db:seed
+npm run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+4. حساب المدير الافتراضي (من `.env`):
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- البريد: `admin@tender-platform.local`
+- كلمة المرور: `Admin123!`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## السكربتات
 
-## Deploy on Vercel
+- `npm run dev` — تشغيل التطوير
+- `npm run build` — بناء الإنتاج
+- `npm run start` — تشغيل البناء
+- `npm run lint` — فحص ESLint
+- `npm run test` — اختبارات الوحدة
+- `npm run db:push` — مزامنة المخطط مع قاعدة البيانات
+- `npm run db:studio` — Drizzle Studio
+- `npm run db:seed` — بيانات أولية (مدير + تصنيفات + منتجات)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## النشر على Vercel
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. ارفع المشروع إلى GitHub/GitLab.
+2. أنشئ مشروع Vercel واربط المستودع.
+3. أضف Neon/Vercel Postgres و Vercel Blob.
+4. عيّن متغيرات البيئة من `.env.example`.
+5. بعد أول نشر نفّذ:
+
+```bash
+npm run db:push
+npm run db:seed
+```
+
+أو اربط أمر migrate في Pipeline الخاص بك.
+
+## ملاحظات مهمة عن Vercel
+
+- رفع الملفات يتم عبر **Client Uploads** إلى Vercel Blob لتجاوز حد 4.5MB على Functions.
+- تحليل PDF يعمل عبر pipeline غير متزامن (`after`) مع `maxDuration` مرتفع لمسار المعالجة.
+- بدون `OPENAI_API_KEY` يتم إرجاع استخراج تجريبي لتسهيل التجربة المحلية.
+- النتائج المستخرجة مساعدة وتتطلب مراجعة بشرية قبل الاعتماد.
+
+## هيكل الخدمات
+
+- `/tenders` المناقصات
+- `/analyses` تحليل دفتر الشروط
+- `/company-profile` ملف الشركة
+- `/templates` مكتبة النماذج
+- `/payments` الدفع اليدوي
+- `/admin` لوحة مدير النظام

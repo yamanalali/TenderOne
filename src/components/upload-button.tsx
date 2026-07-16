@@ -1,0 +1,92 @@
+"use client";
+
+import { useState } from "react";
+import { upload } from "@vercel/blob/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+
+type UploadResult = {
+  url: string;
+  pathname: string;
+  fileName: string;
+};
+
+export function UploadButton({
+  accept = "application/pdf",
+  label = "رفع ملف",
+  onUploaded,
+}: {
+  accept?: string;
+  label?: string;
+  onUploaded: (result: UploadResult) => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+
+  async function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setLoading(true);
+    setError(null);
+    setFileName(file.name);
+
+    try {
+      if (!process.env.NEXT_PUBLIC_USE_BLOB || process.env.NEXT_PUBLIC_USE_BLOB === "false") {
+        // Local/dev fallback when Blob token is not configured
+        const objectUrl = URL.createObjectURL(file);
+        onUploaded({
+          url: objectUrl,
+          pathname: `local/${Date.now()}-${file.name}`,
+          fileName: file.name,
+        });
+        return;
+      }
+
+      const blob = await upload(file.name, file, {
+        access: "private",
+        handleUploadUrl: "/api/upload",
+      });
+
+      onUploaded({
+        url: blob.url,
+        pathname: blob.pathname,
+        fileName: file.name,
+      });
+    } catch (err) {
+      // Fallback for environments without Blob credentials
+      try {
+        const objectUrl = URL.createObjectURL(file);
+        onUploaded({
+          url: objectUrl,
+          pathname: `local/${Date.now()}-${file.name}`,
+          fileName: file.name,
+        });
+      } catch {
+        setError(err instanceof Error ? err.message : "فشل الرفع");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <label className="block">
+        <span className="mb-2 block text-sm font-medium text-slate-700">{label}</span>
+        <Input type="file" accept={accept} onChange={handleChange} disabled={loading} />
+      </label>
+      {loading && <p className="text-sm text-teal-700">جاري الرفع...</p>}
+      {fileName && !loading && (
+        <p className="text-sm text-slate-600">تم اختيار: {fileName}</p>
+      )}
+      {error && <p className="text-sm text-rose-600">{error}</p>}
+      {loading && (
+        <Button type="button" disabled>
+          رفع...
+        </Button>
+      )}
+    </div>
+  );
+}
