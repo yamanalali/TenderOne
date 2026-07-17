@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getCompanyAndProfiles } from "@/app/actions/company-profile";
+import { listActiveProducts } from "@/app/actions/payments";
 import {
   CompanyDataForm,
   CreateProfileForm,
@@ -8,7 +9,16 @@ import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { formatDate } from "@/lib/utils";
 
 export default async function CompanyProfilePage() {
-  const { company, profiles, hasAccess } = await getCompanyAndProfiles();
+  const [{ company, profiles, hasAccess }, products] = await Promise.all([
+    getCompanyAndProfiles(),
+    listActiveProducts(),
+  ]);
+  const profileProduct = products.find(
+    (product) => product.type === "company_profile",
+  );
+  const paymentsHref = profileProduct
+    ? `/payments?productId=${profileProduct.id}`
+    : "/payments";
 
   if (!company) {
     return (
@@ -21,21 +31,36 @@ export default async function CompanyProfilePage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-black">ملف تعريف الشركة</h1>
-        <p className="mt-2 text-slate-600">
-          خدمة مستقلة — أدخل بياناتك مرة واحدة ثم أنشئ تصاميم متعددة
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-black">ملف تعريف الشركة</h1>
+          <p className="mt-2 text-slate-600">
+            خدمة مستقلة — أدخل بياناتك مرة واحدة ثم أنشئ تصاميم رسمية وعصرية وفاخرة
+          </p>
+        </div>
+        <Link
+          href="/templates?type=company_profile"
+          className="text-sm font-bold text-amber-700 hover:underline"
+        >
+          عرض كل تصاميم البروفايل
+        </Link>
       </div>
 
       <CompanyDataForm company={company} />
-      <CreateProfileForm hasAccess={hasAccess} />
+      <CreateProfileForm hasAccess={hasAccess} paymentsHref={paymentsHref} />
 
       <div className="grid gap-4">
         <h2 className="text-xl font-bold">الملفات المنشأة</h2>
         {profiles.length === 0 && (
           <Card>
-            <CardDescription>لم يتم إنشاء أي ملف بعد</CardDescription>
+            <CardTitle>لم يتم إنشاء أي ملف بعد</CardTitle>
+            <CardDescription className="mt-2">
+              أنشئ ملفاً من النموذج أعلاه، أو استخدم محرر المستندات الكامل من
+              مستنداتي لتعديل المحتوى بحرية.
+            </CardDescription>
+            <Link href="/templates?type=company_profile" className="mt-4 inline-block text-sm font-bold text-amber-700 hover:underline">
+              إنشاء بروفايل قابل للتعديل من المعرض
+            </Link>
           </Card>
         )}
         {profiles.map((profile) => (

@@ -68,6 +68,24 @@ export const profileLanguageEnum = pgEnum("profile_language", [
   "bilingual",
 ]);
 
+export const documentTypeEnum = pgEnum("document_type", [
+  "company_profile",
+  "quotation",
+  "invoice",
+  "service_brochure",
+]);
+
+export const documentStyleEnum = pgEnum("document_style", [
+  "formal",
+  "modern",
+  "premium",
+]);
+
+export const documentStatusEnum = pgEnum("document_status", [
+  "draft",
+  "final",
+]);
+
 export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
   email: varchar("email", { length: 255 }).notNull().unique(),
@@ -230,6 +248,45 @@ export const companyProfiles = pgTable("company_profiles", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const documentTemplates = pgTable(
+  "document_templates",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    key: varchar("key", { length: 100 }).notNull(),
+    type: documentTypeEnum("type").notNull(),
+    style: documentStyleEnum("style").notNull(),
+    nameAr: varchar("name_ar", { length: 255 }).notNull(),
+    nameEn: varchar("name_en", { length: 255 }),
+    descriptionAr: text("description_ar"),
+    descriptionEn: text("description_en"),
+    accentColor: varchar("accent_color", { length: 40 }).notNull().default("#0f766e"),
+    secondaryColor: varchar("secondary_color", { length: 40 }).notNull().default("#0f172a"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("document_templates_key_unique").on(table.key)],
+);
+
+export const documentInstances = pgTable("document_instances", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  companyId: uuid("company_id")
+    .notNull()
+    .references(() => companies.id, { onDelete: "cascade" }),
+  templateKey: varchar("template_key", { length: 100 }).notNull(),
+  type: documentTypeEnum("type").notNull(),
+  style: documentStyleEnum("style").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  language: profileLanguageEnum("language").notNull().default("ar"),
+  status: documentStatusEnum("status").notNull().default("draft"),
+  content: jsonb("content").notNull(),
+  createdById: uuid("created_by_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const products = pgTable("products", {
   id: uuid("id").defaultRandom().primaryKey(),
   type: productTypeEnum("type").notNull(),
@@ -238,7 +295,7 @@ export const products = pgTable("products", {
   descriptionAr: text("description_ar"),
   descriptionEn: text("description_en"),
   price: numeric("price", { precision: 12, scale: 2 }).notNull().default("0"),
-  currency: varchar("currency", { length: 10 }).notNull().default("SAR"),
+  currency: varchar("currency", { length: 10 }).notNull().default("USD"),
   credits: integer("credits").default(0),
   isActive: boolean("is_active").notNull().default(true),
   metadata: jsonb("metadata"),
@@ -272,7 +329,7 @@ export const paymentOrders = pgTable("payment_orders", {
     .notNull()
     .references(() => products.id, { onDelete: "restrict" }),
   amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
-  currency: varchar("currency", { length: 10 }).notNull().default("SAR"),
+  currency: varchar("currency", { length: 10 }).notNull().default("USD"),
   status: paymentStatusEnum("status").notNull().default("pending"),
   transferReference: varchar("transfer_reference", { length: 255 }),
   transferNote: text("transfer_note"),
@@ -324,6 +381,7 @@ export const companiesRelations = relations(companies, ({ many }) => ({
   members: many(companyMembers),
   analyses: many(analyses),
   profiles: many(companyProfiles),
+  documents: many(documentInstances),
   payments: many(paymentOrders),
   entitlements: many(entitlements),
 }));
@@ -356,4 +414,6 @@ export type PaymentOrder = typeof paymentOrders.$inferSelect;
 export type Category = typeof categories.$inferSelect;
 export type ChecklistItem = typeof checklistItems.$inferSelect;
 export type CompanyProfile = typeof companyProfiles.$inferSelect;
+export type DocumentTemplate = typeof documentTemplates.$inferSelect;
+export type DocumentInstance = typeof documentInstances.$inferSelect;
 export type Entitlement = typeof entitlements.$inferSelect;

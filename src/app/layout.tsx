@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Cairo } from "next/font/google";
+import { ToastProvider } from "@/components/ui/toast";
 import "./globals.css";
 
 const cairo = Cairo({
@@ -9,11 +10,11 @@ const cairo = Cairo({
 
 export const metadata: Metadata = {
   title: {
-    default: "TenderOne | منصة المناقصات الذكية",
+    default: "TenderOne | منصة إدارة وتجهيز المناقصات",
     template: "%s | TenderOne",
   },
   description:
-    "منصة ذكية لتحليل المناقصات وتجهيز العروض الفنية والمالية، تساعد الشركات على فهم المتطلبات وضمان الامتثال ورفع فرص الفوز بالعقود.",
+    "منصة متخصصة تساعدك على فهم دفاتر الشروط، تنظيم متطلبات المناقصات، وتجهيز عروض فنية ومالية احترافية ترفع فرصك في الفوز بالعقود.",
   applicationName: "TenderOne",
 };
 
@@ -23,8 +24,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ar" dir="rtl" className={`${cairo.variable} h-full`}>
-      <body className="min-h-full antialiased">{children}</body>
+    <html
+      lang="ar"
+      dir="rtl"
+      data-scroll-behavior="smooth"
+      className={`${cairo.variable} h-full`}
+    >
+      <body className="min-h-full antialiased">
+        <ToastProvider>{children}</ToastProvider>
+      </body>
     </html>
   );
 }

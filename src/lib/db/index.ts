@@ -2,7 +2,14 @@ import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "./schema";
 
-let _db: ReturnType<typeof drizzle<typeof schema>> | null = null;
+type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
+
+let _db: DrizzleDb | null = null;
+
+/** Inject an alternative Drizzle instance (used by tests with an in-memory PGlite database). */
+export function setDbForTesting(instance: unknown) {
+  _db = instance as DrizzleDb;
+}
 
 export function getDb() {
   if (!_db) {

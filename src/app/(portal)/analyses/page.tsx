@@ -6,21 +6,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import {
+  analysisStatusColor,
+  analysisStatusLabel,
+} from "@/lib/status-labels";
 import { formatDate } from "@/lib/utils";
-
-const statusLabel: Record<string, string> = {
-  queued: "في الانتظار",
-  processing: "قيد التحليل",
-  completed: "مكتمل",
-  failed: "فشل",
-};
-
-const statusColor: Record<string, string> = {
-  queued: "bg-slate-100 text-slate-700",
-  processing: "bg-amber-100 text-amber-800",
-  completed: "bg-emerald-100 text-emerald-800",
-  failed: "bg-rose-100 text-rose-800",
-};
 
 export default async function AnalysesPage() {
   const [rows, credits] = await Promise.all([
@@ -46,24 +36,40 @@ export default async function AnalysesPage() {
         {rows.length === 0 && (
           <Card>
             <CardTitle>لا توجد تحليلات بعد</CardTitle>
-            <CardDescription>
+            <CardDescription className="mt-2">
               ارفع أي ملف PDF لدفتر شروط لبدء أول تحليل
             </CardDescription>
+            <Link href="/analyses/new" className="mt-4 inline-block">
+              <Button>ابدأ تحليل الآن</Button>
+            </Link>
           </Card>
         )}
         {rows.map((row) => (
           <Link key={row.id} href={`/analyses/${row.id}`}>
-            <Card className="transition hover:border-teal-300">
+            <Card className="transition hover:border-amber-300/60">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <CardTitle>{row.fileName}</CardTitle>
                   <CardDescription>{formatDate(row.createdAt)}</CardDescription>
                 </div>
-                <Badge className={statusColor[row.status]}>
-                  {statusLabel[row.status]}
+                <Badge className={analysisStatusColor[row.status]}>
+                  {analysisStatusLabel[row.status] || row.status}
                 </Badge>
               </div>
-              <p className="mt-3 text-sm text-slate-600">التقدم: {row.progress}%</p>
+              {(row.status === "queued" || row.status === "processing") && (
+                <div className="mt-4">
+                  <div className="mb-1 flex justify-between text-xs text-slate-500">
+                    <span>التقدم</span>
+                    <span>{row.progress}%</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full bg-amber-400 transition-all"
+                      style={{ width: `${Math.max(row.progress, 4)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </Card>
           </Link>
         ))}

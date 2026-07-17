@@ -33,6 +33,19 @@ export const tenderSchema = z.object({
   isPublished: z.boolean().optional(),
 });
 
+const companyLogoSchema = z
+  .string()
+  .max(700_000, "حجم الشعار أكبر من المسموح")
+  .refine(
+    (value) =>
+      value.startsWith("data:image/png;base64,") ||
+      value.startsWith("https://") ||
+      value.startsWith("http://"),
+    "صيغة رابط الشعار غير صالحة",
+  )
+  .optional()
+  .nullable();
+
 export const companyProfileDataSchema = z.object({
   nameAr: z.string().min(2),
   nameEn: z.string().optional().nullable(),
@@ -50,7 +63,121 @@ export const companyProfileDataSchema = z.object({
   servicesEn: z.string().optional().nullable(),
   experienceAr: z.string().optional().nullable(),
   experienceEn: z.string().optional().nullable(),
-  logoUrl: z.string().optional().nullable(),
+  logoUrl: companyLogoSchema,
+});
+
+const companySnapshotSchema = z.object({
+  nameAr: z.string().min(2),
+  nameEn: z.string().optional().nullable(),
+  commercialRegister: z.string().optional().nullable(),
+  taxCard: z.string().optional().nullable(),
+  city: z.string().optional().nullable(),
+  country: z.string().optional().nullable(),
+  address: z.string().optional().nullable(),
+  phone: z.string().optional().nullable(),
+  email: z.string().optional().nullable(),
+  website: z.string().optional().nullable(),
+  aboutAr: z.string().optional().nullable(),
+  aboutEn: z.string().optional().nullable(),
+  servicesAr: z.string().optional().nullable(),
+  servicesEn: z.string().optional().nullable(),
+  experienceAr: z.string().optional().nullable(),
+  experienceEn: z.string().optional().nullable(),
+  logoUrl: companyLogoSchema,
+});
+
+const lineItemSchema = z.object({
+  id: z.string().min(1),
+  description: z.string().min(1),
+  quantity: z.number().nonnegative(),
+  unitPrice: z.number().nonnegative(),
+  unit: z.string().optional(),
+});
+
+export const profileDocumentContentSchema = z.object({
+  kind: z.literal("company_profile"),
+  company: companySnapshotSchema,
+  tagline: z.string().optional(),
+  showAbout: z.boolean(),
+  showServices: z.boolean(),
+  showExperience: z.boolean(),
+  showContact: z.boolean(),
+});
+
+export const quotationDocumentContentSchema = z.object({
+  kind: z.literal("quotation"),
+  company: companySnapshotSchema,
+  clientName: z.string().min(1),
+  clientEmail: z.string().optional(),
+  clientPhone: z.string().optional(),
+  clientAddress: z.string().optional(),
+  quoteNumber: z.string().min(1),
+  issueDate: z.string().min(1),
+  validUntil: z.string().min(1),
+  currency: z.string().min(1),
+  taxRate: z.number().min(0).max(100),
+  items: z.array(lineItemSchema).min(1),
+  notes: z.string().optional(),
+  terms: z.string().optional(),
+});
+
+export const invoiceDocumentContentSchema = z.object({
+  kind: z.literal("invoice"),
+  company: companySnapshotSchema,
+  clientName: z.string().min(1),
+  clientEmail: z.string().optional(),
+  clientPhone: z.string().optional(),
+  clientAddress: z.string().optional(),
+  invoiceNumber: z.string().min(1),
+  issueDate: z.string().min(1),
+  dueDate: z.string().min(1),
+  currency: z.string().min(1),
+  taxRate: z.number().min(0).max(100),
+  paymentStatus: z.enum(["unpaid", "partial", "paid"]),
+  items: z.array(lineItemSchema).min(1),
+  bankNotes: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+export const brochureDocumentContentSchema = z.object({
+  kind: z.literal("service_brochure"),
+  company: companySnapshotSchema,
+  tagline: z.string().min(1),
+  intro: z.string().min(1),
+  services: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        title: z.string().min(1),
+        description: z.string().min(1),
+      }),
+    )
+    .min(1),
+  features: z.array(z.string()),
+  scope: z.string().min(1),
+  cta: z.string().min(1),
+});
+
+export const documentContentSchema = z.discriminatedUnion("kind", [
+  profileDocumentContentSchema,
+  quotationDocumentContentSchema,
+  invoiceDocumentContentSchema,
+  brochureDocumentContentSchema,
+]);
+
+export const createDocumentSchema = z.object({
+  templateKey: z.string().min(1),
+  title: z.string().min(2).optional(),
+  language: z.enum(["ar", "en", "bilingual"]).default("ar"),
+  status: z.enum(["draft", "final"]).default("draft"),
+});
+
+export const updateDocumentSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string().min(2),
+  language: z.enum(["ar", "en", "bilingual"]),
+  status: z.enum(["draft", "final"]),
+  content: documentContentSchema,
 });
 
 export const paymentOrderSchema = z.object({
@@ -75,7 +202,7 @@ export const productSchema = z.object({
   descriptionAr: z.string().optional().nullable(),
   descriptionEn: z.string().optional().nullable(),
   price: z.union([z.string(), z.number()]),
-  currency: z.string().default("SAR"),
+  currency: z.string().default("USD"),
   credits: z.number().int().optional(),
   isActive: z.boolean().optional(),
 });

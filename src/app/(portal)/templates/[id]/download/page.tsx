@@ -10,9 +10,9 @@ export default async function TemplateDownloadPage({
 }) {
   const { id } = await params;
 
-  let file;
+  let data;
   try {
-    file = await getTemplateDownload(id);
+    data = await getTemplateDownload(id);
   } catch {
     return (
       <Card>
@@ -20,50 +20,49 @@ export default async function TemplateDownloadPage({
         <CardDescription>
           يجب شراء النموذج وتفعيله من صفحة الدفع أولاً
         </CardDescription>
-        <Link href="/payments" className="mt-4 inline-block">
-          <Button>الذهاب للدفع</Button>
+        <Link href={`/payments?productId=${id}`} className="mt-4 inline-block">
+          <Button>شراء وتفعيل هذا النموذج</Button>
         </Link>
       </Card>
     );
   }
 
-  if (!file) {
-    return (
-      <Card>
-        <CardTitle>الملف غير متوفر بعد</CardTitle>
-        <CardDescription>
-          تمت الموافقة على المنتج لكن ملف القالب لم يُرفع من الإدارة. يمكنك
-          استخدام النموذج النصي الافتراضي أدناه.
-        </CardDescription>
-        <div className="mt-4 rounded-xl bg-slate-50 p-4 text-sm whitespace-pre-wrap">
-          {defaultTemplateBody(id)}
-        </div>
-        <Link href="/templates" className="mt-4 inline-block">
-          <Button variant="outline">عودة</Button>
-        </Link>
-      </Card>
-    );
-  }
+  const { product, file } = data;
 
   return (
-    <Card>
-      <CardTitle>{file.fileName}</CardTitle>
-      <CardDescription>الإصدار {file.version}</CardDescription>
-      <a href={file.fileUrl} className="mt-4 inline-block" target="_blank" rel="noreferrer">
-        <Button>تنزيل الملف</Button>
-      </a>
-    </Card>
+    <div className="space-y-4">
+      <Card className="border-emerald-200 bg-emerald-50/50">
+        <CardTitle>الخدمة مفعّلة — جاهزة للتنزيل</CardTitle>
+        <CardDescription className="mt-2">
+          هذا هو مكان استخدام النموذج الذي اشترته. اختر طريقة التنزيل بالأسفل.
+        </CardDescription>
+      </Card>
+
+      <Card>
+        <CardTitle>{product.nameAr}</CardTitle>
+        <CardDescription className="mt-2">
+          أنشئ ملف Excel احترافياً ببيانات شركتك، مع خلايا منسقة وقابلة للتعبئة.
+        </CardDescription>
+
+        <div className="mt-5 flex flex-wrap gap-2">
+          <a href={`/api/templates/${product.id}/excel`}>
+            <Button>إنشاء وتنزيل Excel</Button>
+          </a>
+          {file && (
+            <a href={file.fileUrl} target="_blank" rel="noreferrer">
+              <Button variant="outline">
+                تنزيل الملف المرفوع — الإصدار {file.version}
+              </Button>
+            </a>
+          )}
+          <Link href="/templates">
+            <Button variant="outline">عودة لمكتبة النماذج</Button>
+          </Link>
+          <Link href="/my-services">
+            <Button variant="outline">خدماتي المفعّلة</Button>
+          </Link>
+        </div>
+      </Card>
+    </div>
   );
-}
-
-function defaultTemplateBody(productId: string) {
-  return `نموذج احترافي جاهز
-معرف المنتج: ${productId}
-
-- بيانات الجهة الطالبة
-- تفاصيل الطلب
-- الجدول الزمني
-- التوقيعات والاعتمادات
-
-(يمكن لمدير النظام رفع ملف Word/PDF رسمي من لوحة المنتجات)`;
 }

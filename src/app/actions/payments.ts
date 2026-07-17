@@ -1,16 +1,19 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq } from "drizzle-orm";
 import { requireCompanySession, requireSystemAdmin } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { db } from "@/lib/db";
 import {
+  companies,
   entitlements,
   paymentOrders,
   products,
   templateFiles,
+  users,
 } from "@/lib/db/schema";
+import { grantEntitlementForProduct } from "@/lib/entitlements";
 import { assertCompanyAccess, hasTemplateAccess } from "@/lib/permissions";
 import { getAppSettings } from "@/lib/settings";
 import { paymentOrderSchema } from "@/lib/validations";
@@ -75,6 +78,7 @@ export async function createPaymentOrderAction(
   });
 
   revalidatePath("/payments");
+  revalidatePath("/my-services");
   return { success: "تم إرسال طلب الدفع للمراجعة" };
 }
 
@@ -93,16 +97,38 @@ export async function listMyPaymentOrders() {
     .orderBy(desc(paymentOrders.createdAt));
 }
 
-export async function listPendingPayments() {
+export async function listAdminPayments(status?: string) {
   await requireSystemAdmin();
-  return db
+  const rows = await db
     .select({
       order: paymentOrders,
       product: products,
+      companyName: companies.nameAr,
+      userName: users.name,
+      userEmail: users.email,
     })
     .from(paymentOrders)
     .innerJoin(products, eq(products.id, paymentOrders.productId))
+    .innerJoin(companies, eq(companies.id, paymentOrders.companyId))
+    .innerJoin(users, eq(users.id, paymentOrders.userId))
     .orderBy(desc(paymentOrders.createdAt));
+
+  if (!status || status === "all") return rows;
+  return rows.filter((row) => row.order.status === status);
+}
+
+/** @deprecated use listAdminPayments */
+export async function listPendingPayments() {
+  return listAdminPayments();
+}
+
+export async function countPendingPayments() {
+  await requireSystemAdmin();
+  const [row] = await db
+    .select({ value: count() })
+    .from(paymentOrders)
+    .where(eq(paymentOrders.status, "pending"));
+  return Number(row?.value || 0);
 }
 
 export async function reviewPaymentAction(
@@ -139,7 +165,7 @@ export async function reviewPaymentAction(
     .where(eq(paymentOrders.id, orderId));
 
   if (decision === "approved") {
-    await grantEntitlement(row.order.companyId, row.product, orderId);
+    await grantEntitlementForProduct(row.order.companyId, row.product, orderId);
   }
 
   await writeAuditLog({
@@ -152,7 +178,9 @@ export async function reviewPaymentAction(
 
   revalidatePath("/admin/payments");
   revalidatePath("/payments");
+  revalidatePath("/my-services");
   revalidatePath("/templates");
+  revalidatePath("/documents");
   revalidatePath("/analyses");
   revalidatePath("/company-profile");
   return {
@@ -160,55 +188,26 @@ export async function reviewPaymentAction(
   };
 }
 
-async function grantEntitlement(
-  companyId: string,
-  product: typeof products.$inferSelect,
-  paymentId: string,
-) {
-  if (product.type === "analysis_credit") {
-    await db.insert(entitlements).values({
-      companyId,
-      type: "analysis_credit",
-      productId: product.id,
-      remainingCredits: product.credits || 1,
-      isActive: true,
-      sourcePaymentId: paymentId,
-    });
-    return;
-  }
-
-  if (product.type === "company_profile") {
-    await db.insert(entitlements).values({
-      companyId,
-      type: "company_profile",
-      productId: product.id,
-      remainingCredits: 0,
-      isActive: true,
-      sourcePaymentId: paymentId,
-    });
-    return;
-  }
-
-  if (product.type === "template") {
-    await db.insert(entitlements).values({
-      companyId,
-      type: "template",
-      productId: product.id,
-      remainingCredits: 0,
-      isActive: true,
-      sourcePaymentId: paymentId,
-    });
-  }
-}
-
 export async function getPaymentPageData() {
   const session = await requireCompanySession();
-  const [productList, orders, settings] = await Promise.all([
+  const [productList, orders, settings, companyEntitlements] = await Promise.all([
     listActiveProducts(),
     listMyPaymentOrders(),
     getAppSettings(),
+    session.companyId
+      ? db
+          .select()
+          .from(entitlements)
+          .where(eq(entitlements.companyId, session.companyId))
+      : [],
   ]);
-  return { products: productList, orders, settings, companyId: session.companyId };
+  return {
+    products: productList,
+    orders,
+    settings,
+    entitlements: companyEntitlements,
+    companyId: session.companyId,
+  };
 }
 
 export async function canDownloadTemplate(productId: string) {
@@ -225,13 +224,20 @@ export async function getTemplateDownload(productId: string) {
   const allowed = await hasTemplateAccess(session.companyId, productId);
   if (!allowed) throw new Error("FORBIDDEN");
 
-  const [file] = await db
-    .select()
-    .from(templateFiles)
-    .where(
-      and(eq(templateFiles.productId, productId), eq(templateFiles.isLatest, true)),
-    )
-    .limit(1);
+  const [[product], [file]] = await Promise.all([
+    db.select().from(products).where(eq(products.id, productId)).limit(1),
+    db
+      .select()
+      .from(templateFiles)
+      .where(
+        and(
+          eq(templateFiles.productId, productId),
+          eq(templateFiles.isLatest, true),
+        ),
+      )
+      .limit(1),
+  ]);
 
-  return file || null;
+  if (!product) throw new Error("NOT_FOUND");
+  return { product, file: file || null };
 }

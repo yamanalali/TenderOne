@@ -35,7 +35,12 @@ export const analysisExtractionSchema = z.object({
   guarantees: z.array(extractedItemSchema).default([]),
   rejectionRisks: z.array(extractedItemSchema).default([]),
   specialConditions: z.array(extractedItemSchema).default([]),
-  confidence: z.number().min(0).max(100).optional(),
+  confidence: z.preprocess((value) => {
+    if (typeof value !== "number" || Number.isNaN(value)) return undefined;
+    // Models sometimes return 0.9 instead of 90.
+    if (value >= 0 && value <= 1) return Math.round(value * 100);
+    return Math.max(0, Math.min(100, Math.round(value)));
+  }, z.number().min(0).max(100).optional()),
   summary: z.string().nullable().optional(),
 });
 

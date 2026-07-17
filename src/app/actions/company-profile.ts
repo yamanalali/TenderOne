@@ -5,7 +5,11 @@ import { desc, eq } from "drizzle-orm";
 import { requireCompanySession } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { db } from "@/lib/db";
-import { companies, companyProfiles } from "@/lib/db/schema";
+import {
+  companies,
+  companyProfiles,
+  documentInstances,
+} from "@/lib/db/schema";
 import {
   assertCompanyAccess,
   hasCompanyProfileAccess,
@@ -50,6 +54,32 @@ export async function updateCompanyDataAction(
     .set({ ...parsed.data, email: parsed.data.email || null, updatedAt: new Date() })
     .where(eq(companies.id, session.companyId));
 
+  const documents = await db
+    .select()
+    .from(documentInstances)
+    .where(eq(documentInstances.companyId, session.companyId));
+  await Promise.all(
+    documents.map((document) => {
+      const content = document.content as {
+        company?: Record<string, unknown>;
+      };
+      if (!content.company) return Promise.resolve();
+      return db
+        .update(documentInstances)
+        .set({
+          content: {
+            ...content,
+            company: {
+              ...content.company,
+              logoUrl: parsed.data.logoUrl || null,
+            },
+          },
+          updatedAt: new Date(),
+        })
+        .where(eq(documentInstances.id, document.id));
+    }),
+  );
+
   await writeAuditLog({
     actorId: session.user.id,
     action: "company.update",
@@ -58,6 +88,9 @@ export async function updateCompanyDataAction(
   });
 
   revalidatePath("/company-profile");
+  revalidatePath("/settings");
+  revalidatePath("/templates");
+  revalidatePath("/documents");
   return { success: "تم حفظ بيانات الشركة" };
 }
 
@@ -78,7 +111,9 @@ export async function createCompanyProfileAction(
     }
   }
 
-  const templateKey = String(formData.get("templateKey") || "classic");
+  const templateKey = String(
+    formData.get("templateKey") || "company_profile_formal",
+  );
   const language = String(formData.get("language") || "ar") as
     | "ar"
     | "en"
@@ -113,7 +148,10 @@ export async function createCompanyProfileAction(
   });
 
   revalidatePath("/company-profile");
-  return { success: profile.id };
+  return {
+    success: "تم إنشاء ملف التعريف",
+    redirectTo: `/company-profile/${profile.id}`,
+  };
 }
 
 export async function getCompanyAndProfiles() {

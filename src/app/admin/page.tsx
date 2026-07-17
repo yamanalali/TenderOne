@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { getAdminDashboardData } from "@/app/actions/admin";
+import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 
 export default async function AdminHomePage() {
@@ -11,7 +13,23 @@ export default async function AdminHomePage() {
         <p className="mt-2 text-slate-600">إدارة المنصة والخدمات المستقلة</p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      {data.pendingPaymentsCount > 0 && (
+        <Card className="border-amber-200 bg-amber-50/60">
+          <CardTitle>طلبات بانتظار المراجعة</CardTitle>
+          <CardDescription className="mt-2">
+            لديك {data.pendingPaymentsCount} طلب دفع بحاجة إلى موافقة أو رفض.
+          </CardDescription>
+          <Link href="/admin/payments" className="mt-4 inline-block">
+            <Button>فتح قائمة المراجعة</Button>
+          </Link>
+        </Card>
+      )}
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <Card>
+          <CardTitle>{data.pendingPaymentsCount}</CardTitle>
+          <CardDescription>مدفوعات معلّقة</CardDescription>
+        </Card>
         <Card>
           <CardTitle>{data.usersCount}</CardTitle>
           <CardDescription>المستخدمون</CardDescription>

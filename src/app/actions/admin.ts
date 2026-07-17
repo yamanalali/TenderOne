@@ -1,12 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, count, desc, eq } from "drizzle-orm";
 import { requireSystemAdmin } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { db } from "@/lib/db";
 import {
   categories,
+  entitlements,
+  paymentOrders,
   products,
   templateFiles,
   tenders,
@@ -147,7 +149,7 @@ export async function createProductAction(
     descriptionAr: formData.get("descriptionAr") || null,
     descriptionEn: formData.get("descriptionEn") || null,
     price: formData.get("price") || "0",
-    currency: formData.get("currency") || "SAR",
+    currency: formData.get("currency") || "USD",
     credits: Number(formData.get("credits") || 0),
     isActive: formData.get("isActive") === "on",
   });
@@ -199,6 +201,115 @@ export async function createProductAction(
   return { success: "تم إضافة المنتج" };
 }
 
+function parseProductForm(formData: FormData) {
+  return productSchema.safeParse({
+    type: formData.get("type"),
+    nameAr: formData.get("nameAr"),
+    nameEn: formData.get("nameEn") || null,
+    descriptionAr: formData.get("descriptionAr") || null,
+    descriptionEn: formData.get("descriptionEn") || null,
+    price: formData.get("price") || "0",
+    currency: formData.get("currency") || "USD",
+    credits: Number(formData.get("credits") || 0),
+    isActive: formData.get("isActive") === "on",
+  });
+}
+
+function revalidateProductPages() {
+  revalidatePath("/admin/products");
+  revalidatePath("/templates");
+  revalidatePath("/payments");
+  revalidatePath("/my-services");
+}
+
+export async function updateProductAction(
+  productId: string,
+  formData: FormData,
+): Promise<ActionState> {
+  const session = await requireSystemAdmin();
+  const parsed = parseProductForm(formData);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message || "بيانات غير صالحة" };
+  }
+
+  const [existing] = await db
+    .select({ id: products.id })
+    .from(products)
+    .where(eq(products.id, productId))
+    .limit(1);
+  if (!existing) return { error: "المنتج غير موجود" };
+
+  await db
+    .update(products)
+    .set({
+      type: parsed.data.type,
+      nameAr: parsed.data.nameAr,
+      nameEn: parsed.data.nameEn || null,
+      descriptionAr: parsed.data.descriptionAr || null,
+      descriptionEn: parsed.data.descriptionEn || null,
+      price: String(parsed.data.price),
+      currency: parsed.data.currency,
+      credits: parsed.data.credits || 0,
+      isActive: parsed.data.isActive ?? false,
+      updatedAt: new Date(),
+    })
+    .where(eq(products.id, productId));
+
+  await writeAuditLog({
+    actorId: session.user.id,
+    action: "product.update",
+    entityType: "product",
+    entityId: productId,
+  });
+
+  revalidateProductPages();
+  return { success: "تم حفظ تعديلات المنتج" };
+}
+
+export async function deleteProductAction(
+  productId: string,
+): Promise<ActionState> {
+  const session = await requireSystemAdmin();
+  const [existing] = await db
+    .select({ id: products.id, nameAr: products.nameAr })
+    .from(products)
+    .where(eq(products.id, productId))
+    .limit(1);
+  if (!existing) return { error: "المنتج غير موجود" };
+
+  const [[order], [entitlement]] = await Promise.all([
+    db
+      .select({ id: paymentOrders.id })
+      .from(paymentOrders)
+      .where(eq(paymentOrders.productId, productId))
+      .limit(1),
+    db
+      .select({ id: entitlements.id })
+      .from(entitlements)
+      .where(eq(entitlements.productId, productId))
+      .limit(1),
+  ]);
+
+  if (order || entitlement) {
+    return {
+      error:
+        "لا يمكن حذف منتج سبق طلبه أو تفعيله. عطّله من التعديل بدلاً من الحذف.",
+    };
+  }
+
+  await db.delete(products).where(eq(products.id, productId));
+  await writeAuditLog({
+    actorId: session.user.id,
+    action: "product.delete",
+    entityType: "product",
+    entityId: productId,
+    metadata: { nameAr: existing.nameAr },
+  });
+
+  revalidateProductPages();
+  return { success: "تم حذف المنتج" };
+}
+
 export async function getAdminDashboardData() {
   await requireSystemAdmin();
   const allUsers = await db.select().from(users);
@@ -210,11 +321,17 @@ export async function getAdminDashboardData() {
     .from(categories)
     .orderBy(asc(categories.sortOrder));
 
+  const [pendingPayments] = await db
+    .select({ value: count() })
+    .from(paymentOrders)
+    .where(eq(paymentOrders.status, "pending"));
+
   return {
     usersCount: allUsers.length,
     tendersCount: allTenders.length,
     productsCount: allProducts.length,
     categoriesCount: cats.length,
+    pendingPaymentsCount: Number(pendingPayments?.value || 0),
     settings,
     recentUsers: allUsers.slice(0, 5),
   };

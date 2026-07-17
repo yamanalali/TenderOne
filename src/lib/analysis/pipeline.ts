@@ -32,11 +32,17 @@ export async function runAnalysisPipeline(analysisId: string) {
     const extracted = await analyzePdfWithOpenAI({
       fileUrl: analysis.fileUrl,
       fileName: analysis.fileName,
+      onProgress: async (progress) => {
+        await db
+          .update(analyses)
+          .set({ progress, updatedAt: new Date() })
+          .where(eq(analyses.id, analysisId));
+      },
     });
 
     await db
       .update(analyses)
-      .set({ progress: 75, updatedAt: new Date() })
+      .set({ progress: 90, updatedAt: new Date() })
       .where(eq(analyses.id, analysisId));
 
     await persistChecklist(analysisId, extracted);

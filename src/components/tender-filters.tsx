@@ -111,9 +111,17 @@ export function TenderFilters({
           defaultValue={searchParams.get("deadlineTo") || ""}
         />
       </div>
-      <div className="flex items-end">
+      <div className="flex items-end gap-2 md:col-span-2 xl:col-span-1">
         <Button type="submit" className="w-full">
           تطبيق الفلاتر
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full"
+          onClick={() => router.push("/tenders")}
+        >
+          مسح
         </Button>
       </div>
     </form>

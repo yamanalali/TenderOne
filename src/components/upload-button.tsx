@@ -14,10 +14,12 @@ type UploadResult = {
 export function UploadButton({
   accept = "application/pdf",
   label = "رفع ملف",
+  purpose = "general",
   onUploaded,
 }: {
   accept?: string;
   label?: string;
+  purpose?: "general" | "analysis";
   onUploaded: (result: UploadResult) => void;
 }) {
   const [loading, setLoading] = useState(false);
@@ -33,6 +35,23 @@ export function UploadButton({
     setFileName(file.name);
 
     try {
+      if (purpose === "analysis") {
+        const body = new FormData();
+        body.set("file", file);
+        const response = await fetch("/api/analysis-files", {
+          method: "POST",
+          body,
+        });
+        const result = (await response.json()) as UploadResult & {
+          error?: string;
+        };
+        if (!response.ok) {
+          throw new Error(result.error || "فشل تجهيز الملف للتحليل");
+        }
+        onUploaded(result);
+        return;
+      }
+
       if (!process.env.NEXT_PUBLIC_USE_BLOB || process.env.NEXT_PUBLIC_USE_BLOB === "false") {
         // Local/dev fallback when Blob token is not configured
         const objectUrl = URL.createObjectURL(file);
@@ -55,6 +74,13 @@ export function UploadButton({
         fileName: file.name,
       });
     } catch (err) {
+      if (purpose === "analysis") {
+        setError(err instanceof Error ? err.message : "فشل تجهيز الملف للتحليل");
+        setFileName(null);
+        event.target.value = "";
+        return;
+      }
+
       // Fallback for environments without Blob credentials
       try {
         const objectUrl = URL.createObjectURL(file);

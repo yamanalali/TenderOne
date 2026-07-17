@@ -1,66 +1,98 @@
+import Link from "next/link";
+import { ArrowLeft, ShieldCheck } from "lucide-react";
 import { getPaymentPageData } from "@/app/actions/payments";
 import { PaymentForm } from "@/components/payment-form";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
-import { formatDate } from "@/lib/utils";
 
-const statusMeta: Record<string, { label: string; className: string }> = {
-  pending: { label: "قيد المراجعة", className: "bg-amber-100 text-amber-800" },
-  approved: { label: "مقبول", className: "bg-emerald-100 text-emerald-800" },
-  rejected: { label: "مرفوض", className: "bg-rose-100 text-rose-800" },
-};
+export default async function PaymentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ productId?: string }>;
+}) {
+  const params = await searchParams;
+  const { products, settings, entitlements } = await getPaymentPageData();
 
-export default async function PaymentsPage() {
-  const { products, orders, settings } = await getPaymentPageData();
+  const activeEntitlements = entitlements.filter((e) => e.isActive);
+  const ownedProductIds = new Set(
+    activeEntitlements.map((e) => e.productId).filter(Boolean),
+  );
+  const hasDocumentsPack = products.some((product) => {
+    const metadata = product.metadata as { serviceCode?: string } | null;
+    return (
+      metadata?.serviceCode === "documents_pack" &&
+      ownedProductIds.has(product.id)
+    );
+  });
+  const hasProfileAccess =
+    hasDocumentsPack ||
+    activeEntitlements.some((e) => e.type === "company_profile");
+
+  // Analysis credits are consumable, so they stay purchasable. One-time
+  // unlocks (templates, packs, profile builder) disappear once active.
+  const availableProducts = products.filter((product) => {
+    if (product.type === "analysis_credit") return true;
+    if (ownedProductIds.has(product.id)) return false;
+    if (product.type === "company_profile" && hasProfileAccess) return false;
+    return true;
+  });
+  const ownedCount = products.length - availableProducts.length;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-black">نظام الدفع</h1>
-        <p className="mt-2 text-slate-600">
-          اختر الخدمة، ارفع إشعار التحويل، وفعّلها بعد موافقة المدير
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-black">شراء الخدمات</h1>
+          <p className="mt-2 text-slate-600">
+            اختر الخدمة، ارفع إشعار التحويل، وفعّلها بعد موافقة المدير
+          </p>
+        </div>
+        <Link href="/my-services">
+          <Button variant="outline" className="gap-2">
+            خدماتي ورصيدي
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+        </Link>
       </div>
 
-      <PaymentForm
-        products={products}
-        bankName={settings.bankName}
-        bankAccountName={settings.bankAccountName}
-        bankIban={settings.bankIban}
-      />
+      {ownedCount > 0 && (
+        <Card className="border-emerald-200 bg-emerald-50/50">
+          <div className="flex items-start gap-3">
+            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+            <div>
+              <CardTitle>لديك خدمات مفعّلة بالفعل</CardTitle>
+              <CardDescription className="mt-1 leading-6">
+                الخدمات التي اشتريتها وفعّلتها لا تظهر هنا — تجدها جاهزة
+                للاستخدام في صفحة «خدماتي ورصيدي».
+              </CardDescription>
+              <Link href="/my-services" className="mt-3 inline-block">
+                <Button size="sm" variant="outline" className="gap-2">
+                  عرض خدماتي المفعّلة
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </Card>
+      )}
 
-      <div className="grid gap-4">
-        <h2 className="text-xl font-bold">طلباتي</h2>
-        {orders.length === 0 && (
-          <Card>
-            <CardDescription>لا توجد طلبات بعد</CardDescription>
-          </Card>
-        )}
-        {orders.map(({ order, product }) => {
-          const meta = statusMeta[order.status];
-          return (
-            <Card key={order.id}>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <CardTitle>{product.nameAr}</CardTitle>
-                  <CardDescription>
-                    {order.amount} {order.currency} — {formatDate(order.createdAt)}
-                  </CardDescription>
-                </div>
-                <Badge className={meta.className}>{meta.label}</Badge>
-              </div>
-              <p className="mt-3 text-sm text-slate-600">
-                مرجع التحويل: {order.transferReference}
-              </p>
-              {order.reviewNote && (
-                <p className="mt-2 text-sm text-slate-600">
-                  ملاحظة المراجعة: {order.reviewNote}
-                </p>
-              )}
-            </Card>
-          );
-        })}
-      </div>
+      {availableProducts.length === 0 ? (
+        <Card>
+          <CardTitle>كل الخدمات مفعّلة لديك</CardTitle>
+          <CardDescription className="mt-2">
+            لا توجد خدمات جديدة متاحة للشراء حالياً. يمكنك استخدام خدماتك من
+            صفحة «خدماتي ورصيدي».
+          </CardDescription>
+        </Card>
+      ) : (
+        <PaymentForm
+          products={availableProducts}
+          bankName={settings.bankName}
+          bankAccountName={settings.bankAccountName}
+          bankIban={settings.bankIban}
+          initialProductId={params.productId}
+        />
+      )}
     </div>
   );
 }

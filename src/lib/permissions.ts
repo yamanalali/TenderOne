@@ -1,7 +1,12 @@
 import { and, eq, gt, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { entitlements, type Entitlement } from "@/lib/db/schema";
+import {
+  entitlements,
+  products,
+  type Entitlement,
+} from "@/lib/db/schema";
 import type { AuthSession } from "@/lib/auth";
+import type { DocumentType } from "@/lib/documents/types";
 
 export function isSystemAdmin(session: AuthSession) {
   return session.user.role === "system_admin";
@@ -66,6 +71,75 @@ export async function hasCompanyProfileAccess(companyId: string) {
     )
     .limit(1);
   return rows.length > 0;
+}
+
+async function listActiveEntitlementsWithProducts(companyId: string) {
+  return db
+    .select({
+      entitlement: entitlements,
+      product: products,
+    })
+    .from(entitlements)
+    .leftJoin(products, eq(entitlements.productId, products.id))
+    .where(
+      and(
+        eq(entitlements.companyId, companyId),
+        eq(entitlements.isActive, true),
+        or(
+          sql`${entitlements.expiresAt} is null`,
+          gt(entitlements.expiresAt, new Date()),
+        ),
+      ),
+    );
+}
+
+function isDocumentsPack(
+  product: typeof products.$inferSelect | null,
+) {
+  const metadata = product?.metadata as { serviceCode?: string } | null;
+  return metadata?.serviceCode === "documents_pack";
+}
+
+/** Access is scoped: the pack unlocks all documents; profile access unlocks profiles only. */
+export async function hasDocumentTemplateAccess(
+  companyId: string,
+  documentType: DocumentType,
+) {
+  const rows = await listActiveEntitlementsWithProducts(companyId);
+  return rows.some(({ entitlement, product }) => {
+    if (entitlement.type === "service" && isDocumentsPack(product)) {
+      return true;
+    }
+    return (
+      documentType === "company_profile" &&
+      entitlement.type === "company_profile"
+    );
+  });
+}
+
+export async function getDocumentAccessByType(companyId: string) {
+  const rows = await listActiveEntitlementsWithProducts(companyId);
+  const hasPack = rows.some(
+    ({ entitlement, product }) =>
+      entitlement.type === "service" && isDocumentsPack(product),
+  );
+  const hasProfile =
+    hasPack ||
+    rows.some(
+      ({ entitlement }) => entitlement.type === "company_profile",
+    );
+
+  return {
+    company_profile: hasProfile,
+    quotation: hasPack,
+    invoice: hasPack,
+    service_brochure: hasPack,
+  } satisfies Record<DocumentType, boolean>;
+}
+
+export async function hasDocumentsAccess(companyId: string) {
+  const access = await getDocumentAccessByType(companyId);
+  return Object.values(access).some(Boolean);
 }
 
 export async function consumeAnalysisCredit(companyId: string) {

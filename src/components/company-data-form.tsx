@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   createCompanyProfileAction,
@@ -9,6 +10,7 @@ import {
 import type { ActionState } from "@/app/actions/auth";
 import { PROFILE_TEMPLATES } from "@/lib/company-profile-templates";
 import type { Company } from "@/lib/db/schema";
+import { CompanyLogoField } from "@/components/company-logo-field";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -27,6 +29,10 @@ export function CompanyDataForm({ company }: { company: Company }) {
       <CardTitle>بيانات الشركة</CardTitle>
       <CardDescription>تُدخل مرة واحدة وتُستخدم لإنشاء ملفات التعريف</CardDescription>
       <form action={formAction} className="mt-6 grid gap-4 md:grid-cols-2">
+        <CompanyLogoField
+          initialValue={company.logoUrl}
+          companyName={company.nameAr}
+        />
         <div>
           <Label>اسم الشركة (عربي)</Label>
           <Input name="nameAr" defaultValue={company.nameAr} required />
@@ -116,13 +122,19 @@ export function CompanyDataForm({ company }: { company: Company }) {
   );
 }
 
-export function CreateProfileForm({ hasAccess }: { hasAccess: boolean }) {
+export function CreateProfileForm({
+  hasAccess,
+  paymentsHref = "/payments",
+}: {
+  hasAccess: boolean;
+  paymentsHref?: string;
+}) {
   const router = useRouter();
   const [state, formAction, pending] = useActionState(
     async (prev: ActionState, formData: FormData) => {
       const result = await createCompanyProfileAction(prev, formData);
-      if (result.success && result.success.length > 20) {
-        router.push(`/company-profile/${result.success}`);
+      if (result.redirectTo) {
+        router.push(result.redirectTo);
       }
       return result;
     },
@@ -136,6 +148,21 @@ export function CreateProfileForm({ hasAccess }: { hasAccess: boolean }) {
         اختر القالب واللغة.{" "}
         {!hasAccess && "يلزم تفعيل الخدمة من صفحة الدفع أولاً."}
       </CardDescription>
+      {!hasAccess && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+          <p className="font-bold">الخدمة غير مفعّلة بعد</p>
+          <p className="mt-1 leading-6">
+            بعد الشراء والموافقة ستعود إلى هذه الصفحة مباشرة لإنشاء ملف
+            الشركة.
+          </p>
+          <Link
+            href={paymentsHref}
+            className="mt-3 inline-block font-bold text-amber-800 underline"
+          >
+            تفعيل منشئ ملف الشركة
+          </Link>
+        </div>
+      )}
       <form action={formAction} className="mt-6 space-y-4">
         <div>
           <Label>عنوان الملف</Label>
@@ -143,10 +170,10 @@ export function CreateProfileForm({ hasAccess }: { hasAccess: boolean }) {
         </div>
         <div>
           <Label>القالب</Label>
-          <Select name="templateKey" defaultValue="classic">
+          <Select name="templateKey" defaultValue="company_profile_formal">
             {PROFILE_TEMPLATES.map((t) => (
               <option key={t.key} value={t.key}>
-                {t.nameAr} / {t.nameEn}
+                {t.nameAr}
               </option>
             ))}
           </Select>

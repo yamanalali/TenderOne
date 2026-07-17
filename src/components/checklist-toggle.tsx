@@ -22,7 +22,8 @@ export function ChecklistToggle({
           await toggleChecklistItemAction(itemId, e.target.checked);
         });
       }}
-      className="h-4 w-4 rounded border-slate-300"
+      aria-label={isCompleted ? "إلغاء تحديد البند كمكتمل" : "تحديد البند كمكتمل"}
+      className="h-5 w-5 cursor-pointer rounded-md border-slate-300 accent-teal-700 disabled:cursor-wait disabled:opacity-60"
     />
   );
 }

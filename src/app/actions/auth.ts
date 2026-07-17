@@ -16,6 +16,7 @@ import { loginSchema, registerSchema } from "@/lib/validations";
 export type ActionState = {
   error?: string;
   success?: string;
+  redirectTo?: string;
 };
 
 export async function registerAction(

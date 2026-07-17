@@ -32,6 +32,12 @@ export async function createAnalysisAction(
   if (!fileName || !fileUrl || !filePathname) {
     return { error: "يرجى رفع ملف PDF أولاً" };
   }
+  if (fileUrl.startsWith("blob:")) {
+    return {
+      error:
+        "تعذر تجهيز الملف للتحليل الحقيقي. أعد رفعه وانتظر اكتمال التجهيز قبل بدء التحليل.",
+    };
+  }
 
   try {
     if (!isSystemAdmin(session)) {
@@ -68,7 +74,10 @@ export async function createAnalysisAction(
   await enqueueAnalysis(row.id);
 
   revalidatePath("/analyses");
-  return { success: row.id };
+  return {
+    success: "بدأ التحليل بنجاح",
+    redirectTo: `/analyses/${row.id}`,
+  };
 }
 
 export async function retryAnalysisAction(analysisId: string): Promise<ActionState> {

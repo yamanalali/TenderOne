@@ -1,13 +1,17 @@
-import "dotenv/config";
+import { config } from "dotenv";
+config({ path: ".env.local" });
+config();
 import { eq } from "drizzle-orm";
 import { hashPassword } from "@/lib/password";
 import { db } from "@/lib/db";
 import {
   categories,
+  documentTemplates,
   products,
   systemSettings,
   users,
 } from "@/lib/db/schema";
+import { DOCUMENT_TEMPLATES } from "@/lib/documents/registry";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { slugify } from "@/lib/utils";
 
@@ -105,6 +109,16 @@ async function seed() {
         credits: 0,
       },
       {
+        type: "service",
+        nameAr: "باقة النماذج المؤسسية",
+        nameEn: "Business documents pack",
+        descriptionAr:
+          "منشئ تفاعلي لـ 12 تصميماً: بروفايل، عرض سعر، فاتورة، وعرض خدمات — مع معاينة وطباعة PDF",
+        price: "299.00",
+        credits: 0,
+        metadata: { serviceCode: "documents_pack" },
+      },
+      {
         type: "template",
         nameAr: "نموذج طلب شراء",
         nameEn: "Purchase request template",
@@ -162,6 +176,46 @@ async function seed() {
       },
     ]);
     console.log("Seeded products and templates");
+  } else {
+    const existingPack = existingProducts.find(
+      (p) =>
+        p.type === "service" &&
+        (p.metadata as { serviceCode?: string } | null)?.serviceCode ===
+          "documents_pack",
+    );
+    if (!existingPack) {
+      await db.insert(products).values({
+        type: "service",
+        nameAr: "باقة النماذج المؤسسية",
+        nameEn: "Business documents pack",
+        descriptionAr:
+          "منشئ تفاعلي لـ 12 تصميماً: بروفايل، عرض سعر، فاتورة، وعرض خدمات — مع معاينة وطباعة PDF",
+        price: "299.00",
+        credits: 0,
+        metadata: { serviceCode: "documents_pack" },
+      });
+      console.log("Seeded documents pack product");
+    }
+  }
+
+  const existingDocTemplates = await db.select().from(documentTemplates);
+  if (!existingDocTemplates.length) {
+    await db.insert(documentTemplates).values(
+      DOCUMENT_TEMPLATES.map((t) => ({
+        key: t.key,
+        type: t.type,
+        style: t.style,
+        nameAr: t.nameAr,
+        nameEn: t.nameEn,
+        descriptionAr: t.descriptionAr,
+        descriptionEn: t.descriptionEn,
+        accentColor: t.accentColor,
+        secondaryColor: t.secondaryColor,
+        sortOrder: t.sortOrder,
+        isActive: true,
+      })),
+    );
+    console.log(`Seeded ${DOCUMENT_TEMPLATES.length} document templates`);
   }
 
   console.log("Seed completed");

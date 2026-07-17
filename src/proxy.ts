@@ -7,11 +7,13 @@ const protectedPrefixes = [
   "/analyses",
   "/company-profile",
   "/templates",
+  "/documents",
   "/payments",
+  "/settings",
   "/admin",
 ];
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const needsAuth = protectedPrefixes.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
@@ -36,7 +38,9 @@ export const config = {
     "/analyses/:path*",
     "/company-profile/:path*",
     "/templates/:path*",
+    "/documents/:path*",
     "/payments/:path*",
+    "/settings/:path*",
     "/admin/:path*",
   ],
 };

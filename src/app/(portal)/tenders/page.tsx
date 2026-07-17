@@ -57,7 +57,18 @@ export default async function TendersPage({
         {filtered.length === 0 && (
           <Card>
             <CardTitle>لا توجد مناقصات مطابقة</CardTitle>
-            <CardDescription>جرّب تعديل الفلاتر أو عد لاحقاً</CardDescription>
+            <CardDescription className="mt-2">
+              {Object.keys(params).some((key) => params[key])
+                ? "جرّب تعديل الفلاتر أو امسحها لعرض كل المناقصات."
+                : "لا توجد مناقصات منشورة حالياً. عد لاحقاً."}
+            </CardDescription>
+            {Object.keys(params).some((key) => params[key]) && (
+              <Link href="/tenders" className="mt-4 inline-block">
+                <span className="inline-flex h-11 items-center rounded-xl bg-teal-700 px-4 text-sm font-semibold text-white">
+                  مسح الفلاتر
+                </span>
+              </Link>
+            )}
           </Card>
         )}
         {filtered.map(({ tender, categoryName }) => {
