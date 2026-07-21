@@ -53,7 +53,7 @@ export function UploadButton({
       }
 
       const blob = await upload(file.name, file, {
-        access: "private",
+        access: "public",
         handleUploadUrl: "/api/upload",
       });
 
