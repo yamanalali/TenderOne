@@ -4,6 +4,7 @@ import { useState } from "react";
 import { upload } from "@vercel/blob/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { uploadAnalysisPdf } from "@/lib/analysis/upload-client";
 
 type UploadResult = {
   url: string;
@@ -36,19 +37,7 @@ export function UploadButton({
 
     try {
       if (purpose === "analysis") {
-        const body = new FormData();
-        body.set("file", file);
-        const response = await fetch("/api/analysis-files", {
-          method: "POST",
-          body,
-        });
-        const result = (await response.json()) as UploadResult & {
-          error?: string;
-        };
-        if (!response.ok) {
-          throw new Error(result.error || "فشل تجهيز الملف للتحليل");
-        }
-        onUploaded(result);
+        onUploaded(await uploadAnalysisPdf(file));
         return;
       }
 

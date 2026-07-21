@@ -10,12 +10,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  uploadAnalysisPdf,
+  type AnalysisUploadResult,
+} from "@/lib/analysis/upload-client";
 
-type UploadedFile = {
-  url: string;
-  pathname: string;
-  fileName: string;
-};
+type UploadedFile = AnalysisUploadResult;
 
 export function AnalysisCreateForm({
   tenderId,
@@ -64,22 +64,7 @@ export function AnalysisCreateForm({
     try {
       const next: UploadedFile[] = [];
       for (const file of Array.from(selected)) {
-        if (file.type !== "application/pdf") {
-          throw new Error(`الملف «${file.name}» ليس بصيغة PDF`);
-        }
-        const body = new FormData();
-        body.set("file", file);
-        const response = await fetch("/api/analysis-files", {
-          method: "POST",
-          body,
-        });
-        const result = (await response.json()) as UploadedFile & {
-          error?: string;
-        };
-        if (!response.ok) {
-          throw new Error(result.error || `فشل رفع ${file.name}`);
-        }
-        next.push(result);
+        next.push(await uploadAnalysisPdf(file));
       }
       setFiles((prev) => [...prev, ...next]);
     } catch (error) {
@@ -97,7 +82,8 @@ export function AnalysisCreateForm({
       <CardTitle>رفع ملفات المناقصة</CardTitle>
       <CardDescription>
         ارفع كل ملفات المناقصة المرتبطة (PDF) في طلب واحد للحصول على قائمة
-        متطلبات شاملة. رصيدك الحالي: {credits}
+        متطلبات شاملة. للملفات الكبيرة (مثل 100+ صفحة) يُفضّل تقسيمها أو رفعها
+        عبر التخزين السحابي. رصيدك الحالي: {credits}
       </CardDescription>
 
       {credits <= 0 && (
