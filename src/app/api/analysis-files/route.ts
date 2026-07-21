@@ -1,3 +1,4 @@
+import { get } from "@vercel/blob";
 import OpenAI, { toFile } from "openai";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
@@ -27,20 +28,21 @@ async function uploadBytesToOpenAI(
 }
 
 async function ingestFromBlob(input: {
-  blobUrl: string;
+  pathname: string;
+  blobUrl?: string;
   fileName: string;
   maxBytes: number;
   apiKey: string;
 }) {
-  // Public Blob store: download via the public URL (no private get()).
-  const response = await fetch(input.blobUrl);
-  if (!response.ok) {
+  // Private Blob store: authenticated download via SDK.
+  const result = await get(input.pathname, { access: "private" });
+  if (!result?.stream) {
     throw new Error(
-      "تعذر تنزيل الملف من Vercel Blob. تأكد أن التخزين مربوط بالمشروع وأن BLOB_READ_WRITE_TOKEN موجود بعد Redeploy.",
+      "تعذر قراءة الملف من Vercel Blob الخاص. تأكد أن التخزين مربوط بالمشروع وأنك أعدت النشر بعد إنشاء المخزن.",
     );
   }
 
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const bytes = new Uint8Array(await new Response(result.stream).arrayBuffer());
 
   if (bytes.byteLength > input.maxBytes) {
     throw new Error(
@@ -80,7 +82,7 @@ export async function POST(request: Request) {
         pathname?: string;
         fileName?: string;
       };
-      if (!body.blobUrl || !body.pathname || !body.fileName) {
+      if (!body.pathname || !body.fileName) {
         return NextResponse.json(
           { error: "بيانات الملف غير مكتملة" },
           { status: 400 },
@@ -88,6 +90,7 @@ export async function POST(request: Request) {
       }
 
       const result = await ingestFromBlob({
+        pathname: body.pathname,
         blobUrl: body.blobUrl,
         fileName: body.fileName,
         maxBytes,

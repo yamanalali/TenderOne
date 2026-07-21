@@ -115,8 +115,9 @@ async function uploadViaBlob(file: File): Promise<AnalysisUploadResult> {
 
   try {
     const token = await requestBlobClientToken(pathname, multipart);
+    // Must match the Blob store type (tender-one-blob is Private).
     const blob = await put(pathname, file, {
-      access: "public",
+      access: "private",
       token,
       multipart,
       contentType: "application/pdf",
