@@ -1,4 +1,5 @@
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
+import { PDFDocument } from "pdf-lib";
 import {
   resolveConfidence,
 } from "@/lib/analysis/confidence";
@@ -8,17 +9,54 @@ import {
 } from "@/lib/analysis/types";
 import { getGlobalOpenAIConfig } from "@/lib/settings";
 
+/** Pages per synthetic chunk when a single PDF exceeds model context. */
+const PAGES_PER_ANALYSIS_CHUNK = 45;
+
 const SYSTEM_PROMPT = `أنت محلل خبير لدفاتر شروط المناقصات والصفقات العمومية (عربي/فرنسي/إنجليزي).
 استخرج فقط ما هو موجود فعلياً في الملف. لا تختلق أرقاماً أو جهات أو مواعيد.
 إذا لم تجد المعلومة بعد بحث دقيق ضع null.
 أرجع JSON فقط حسب المخطط المطلوب.
 دفاتر الشروط اللبنانية والعربية غالباً تذكر: الجهة الشارية، رقم الصفقة/المناقصة، آخر موعد لتقديم العروض، مدة التنفيذ، ضمان العرض، ضمان حسن التنفيذ، العملة، مدة سريان العرض، وطريقة التقديم.`;
 
+type FileDetail = "low" | "high" | "auto";
+
 type FileContent =
-  | { type: "input_file"; file_id: string }
-  | { type: "input_file"; file_url: string };
+  | { type: "input_file"; file_id: string; detail?: FileDetail }
+  | { type: "input_file"; file_url: string; detail?: FileDetail };
 
 type StageProgress = (progress: number, label: string) => Promise<void> | void;
+
+type ChecklistSections = Pick<
+  AnalysisExtraction,
+  | "documents"
+  | "experience"
+  | "staff"
+  | "equipment"
+  | "samples"
+  | "certificates"
+  | "guarantees"
+  | "rejectionRisks"
+  | "specialConditions"
+>;
+
+const CHECKLIST_KEYS: Array<keyof ChecklistSections> = [
+  "documents",
+  "experience",
+  "staff",
+  "equipment",
+  "samples",
+  "certificates",
+  "guarantees",
+  "rejectionRisks",
+  "specialConditions",
+];
+
+function isContextOverflowError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /context window|context_length|maximum context|too many tokens|input.*too large/i.test(
+    message,
+  );
+}
 
 function demoExtraction(fileName: string): AnalysisExtraction {
   return {
@@ -195,16 +233,63 @@ async function runStructuredStage<T>(opts: {
   return JSON.parse(response.output_text) as T;
 }
 
-function toFileContent(fileUrl: string): FileContent {
+function toFileContent(
+  fileUrl: string,
+  detail: FileDetail = "low",
+): FileContent {
+  // detail:low reduces PDF page-image tokens (critical for 100+ page tenders).
   return fileUrl.startsWith("openai:")
     ? {
         type: "input_file",
         file_id: fileUrl.slice("openai:".length),
+        detail,
       }
     : {
         type: "input_file",
         file_url: fileUrl,
+        detail,
       };
+}
+
+function emptyChecklist(): ChecklistSections {
+  return {
+    documents: [],
+    experience: [],
+    staff: [],
+    equipment: [],
+    samples: [],
+    certificates: [],
+    guarantees: [],
+    rejectionRisks: [],
+    specialConditions: [],
+  };
+}
+
+function mergeChecklistItems(
+  lists: ChecklistSections[],
+): ChecklistSections {
+  const merged = emptyChecklist();
+  for (const key of CHECKLIST_KEYS) {
+    const seen = new Set<string>();
+    for (const list of lists) {
+      for (const item of list[key]) {
+        const dedupeKey = `${item.title.trim().toLowerCase()}|${item.pageNumber ?? ""}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        merged[key].push(item);
+      }
+    }
+  }
+  return merged;
+}
+
+function preferText(
+  primary: string | null | undefined,
+  fallback: string | null | undefined,
+): string | null {
+  if (primary && primary.trim()) return primary;
+  if (fallback && fallback.trim()) return fallback;
+  return null;
 }
 
 function mergeExtraction(parts: {
@@ -234,61 +319,50 @@ function mergeExtraction(parts: {
   });
 }
 
-export async function analyzePdfWithOpenAI(input: {
-  fileUrl?: string;
-  fileName?: string;
-  files?: Array<{ fileUrl: string; fileName: string }>;
-  onProgress?: StageProgress;
-}): Promise<AnalysisExtraction> {
-  const files =
-    input.files && input.files.length > 0
-      ? input.files
-      : input.fileUrl && input.fileName
-        ? [{ fileUrl: input.fileUrl, fileName: input.fileName }]
-        : [];
+const checklistSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    documents: { type: "array", items: itemSchema() },
+    experience: { type: "array", items: itemSchema() },
+    staff: { type: "array", items: itemSchema() },
+    equipment: { type: "array", items: itemSchema() },
+    samples: { type: "array", items: itemSchema() },
+    certificates: { type: "array", items: itemSchema() },
+    guarantees: { type: "array", items: itemSchema() },
+    rejectionRisks: { type: "array", items: itemSchema() },
+    specialConditions: { type: "array", items: itemSchema() },
+  },
+  required: [
+    "documents",
+    "experience",
+    "staff",
+    "equipment",
+    "samples",
+    "certificates",
+    "guarantees",
+    "rejectionRisks",
+    "specialConditions",
+  ],
+} as const;
 
-  const config = await getGlobalOpenAIConfig();
-  if (!config.apiKey) {
-    return demoExtraction(files.map((f) => f.fileName).join(" + ") || "demo.pdf");
-  }
-  if (files.length === 0) {
-    throw new Error("لا توجد ملفات للتحليل");
-  }
-  if (files.some((file) => file.fileUrl.startsWith("blob:"))) {
-    throw new Error(
-      "رابط الملف محلي وغير صالح للتحليل. أعد رفع ملفات PDF من صفحة تحليل جديد.",
-    );
-  }
-
-  const client = new OpenAI({ apiKey: config.apiKey });
-  const model = config.model;
-  const fileContents = files.map((file) => toFileContent(file.fileUrl));
-  const filesNote =
-    files.length > 1
-      ? `\nملاحظة: أُرفقت ${files.length} ملفات مرتبطة بنفس المناقصة (${files
-          .map((f) => f.fileName)
-          .join("، ")}). ادمج المعلومات من كل الملفات في نتيجة واحدة شاملة. إذا لم تُذكر معلومة في أي ملف ضع null.`
-      : "";
-
-  await input.onProgress?.(20, "استخراج بيانات المناقصة");
-
-  const header = await runStructuredStage<{
+async function extractHeader(opts: {
+  client: OpenAI;
+  model: string;
+  fileContents: FileContent[];
+  filesNote: string;
+}) {
+  return runStructuredStage<{
     tenderInfo: AnalysisExtraction["tenderInfo"];
     summary: string | null;
   }>({
-    client,
-    model,
-    fileContents,
+    client: opts.client,
+    model: opts.model,
+    fileContents: opts.fileContents,
     name: "tender_header",
-    instruction: `المرحلة 1/4 — استخرج فقط بيانات رأس المناقصة من الصفحة الأولى والصفحات التعريفية:${filesNote}
-- agency: اسم الجهة الشارية / الإدارة / الوزارة
-- referenceNumber: رقم الصفقة أو المناقصة أو المرجع
-- deadline: آخر موعد لتقديم العروض (مع الساعة إن وُجدت)
-- executionDuration: مدة التنفيذ أو إنجاز الأشغال
-- guarantees: ملخص موجز للكفالات (عرض + حسن تنفيذ)
-- currency: عملة الصفقة إن ذُكرت
-- bidValidity: مدة سريان العرض
-ثم اكتب summary قصيراً (3–5 جمل) يصف طبيعة الصفقة دون اختلاق.`,
+    instruction: `المرحلة 1 — استخرج فقط بيانات رأس المناقصة من الصفحات التعريفية الأولى:${opts.filesNote}
+- agency / referenceNumber / deadline / executionDuration / guarantees / currency / bidValidity
+ثم summary قصير (3–5 جمل) دون اختلاق. إن لم تجد معلومة ضع null.`,
     schema: {
       type: "object",
       additionalProperties: false,
@@ -299,20 +373,24 @@ export async function analyzePdfWithOpenAI(input: {
       required: ["tenderInfo", "summary"],
     },
   });
+}
 
-  await input.onProgress?.(40, "استخراج طريقة التقديم");
-
-  const submission = await runStructuredStage<{
+async function extractSubmission(opts: {
+  client: OpenAI;
+  model: string;
+  fileContents: FileContent[];
+  filesNote: string;
+}) {
+  return runStructuredStage<{
     submissionMethod: AnalysisExtraction["submissionMethod"];
   }>({
-    client,
-    model,
-    fileContents,
+    client: opts.client,
+    model: opts.model,
+    fileContents: opts.fileContents,
     name: "tender_submission",
-    instruction: `المرحلة 2/4 — ركّز فقط على طريقة تقديم العروض:${filesNote}
-حدّد بوضوح هل التقديم عبر منصة إلكترونية، بريد إلكتروني، تسليم يدوي/ظرف مغلق، أو مزيج.
-املأ العنوان أو رابط المنصة أو البريد إن وُجد، وضع specialInstructions لأي تعليمات خاصة (ظرفين، ختم، موعد فتح المغلفات...).
-إذا لم يُذكر أسلوب معيّن صراحةً اتركه false وnull بدون افتراض.`,
+    instruction: `المرحلة 2 — ركّز فقط على طريقة تقديم العروض:${opts.filesNote}
+حدّد المنصة الإلكترونية / البريد / التسليم اليدوي، والعنوان أو الرابط أو البريد إن وُجد.
+لا تفترض أسلوباً غير مذكور صراحة.`,
     schema: {
       type: "object",
       additionalProperties: false,
@@ -322,74 +400,34 @@ export async function analyzePdfWithOpenAI(input: {
       required: ["submissionMethod"],
     },
   });
+}
 
-  await input.onProgress?.(60, "استخراج المطلوبات والقائمة");
-
-  const checklist = await runStructuredStage<{
-    documents: AnalysisExtraction["documents"];
-    experience: AnalysisExtraction["experience"];
-    staff: AnalysisExtraction["staff"];
-    equipment: AnalysisExtraction["equipment"];
-    samples: AnalysisExtraction["samples"];
-    certificates: AnalysisExtraction["certificates"];
-    guarantees: AnalysisExtraction["guarantees"];
-    rejectionRisks: AnalysisExtraction["rejectionRisks"];
-    specialConditions: AnalysisExtraction["specialConditions"];
-  }>({
-    client,
-    model,
-    fileContents,
+async function extractChecklist(opts: {
+  client: OpenAI;
+  model: string;
+  fileContents: FileContent[];
+  filesNote: string;
+}) {
+  return runStructuredStage<ChecklistSections>({
+    client: opts.client,
+    model: opts.model,
+    fileContents: opts.fileContents,
     name: "tender_checklist",
-    instruction: `المرحلة 3/4 — استخرج Checklist كاملة للمطلوبات من كل الملفات المرفوعة:
-- documents: الملاحق والوثائق والمستندات المطلوب إرفاقها
-- experience: شروط الخبرة والمؤهلات الفنية/المالية
-- staff: الكادر المطلوب
-- equipment: المعدات
-- samples: العينات
-- certificates: الشهادات والإفادات (ضريبة، ضمان اجتماعي، اقتصاد وتجارة...)
-- guarantees: ضمان العرض / حسن التنفيذ / أي كفالات
-- rejectionRisks: أسباب الرفض أو الاستبعاد
-- specialConditions: شروط خاصة (سرية مصرفية، نزاهة، معاينة مواقع...)
-لكل بند: عنوان واضح، تفاصيل مختصرة، رقم الصفحة إن أمكن، وهل هو مطلوب.
-لا تكرر نفس البند مرتين. لا تترك الأقسام فارغة إن وُجدت بنود واضحة في الملف.`,
-    schema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        documents: { type: "array", items: itemSchema() },
-        experience: { type: "array", items: itemSchema() },
-        staff: { type: "array", items: itemSchema() },
-        equipment: { type: "array", items: itemSchema() },
-        samples: { type: "array", items: itemSchema() },
-        certificates: { type: "array", items: itemSchema() },
-        guarantees: { type: "array", items: itemSchema() },
-        rejectionRisks: { type: "array", items: itemSchema() },
-        specialConditions: { type: "array", items: itemSchema() },
-      },
-      required: [
-        "documents",
-        "experience",
-        "staff",
-        "equipment",
-        "samples",
-        "certificates",
-        "guarantees",
-        "rejectionRisks",
-        "specialConditions",
-      ],
-    },
+    instruction: `المرحلة 3 — استخرج Checklist للمطلوبات:${opts.filesNote}
+الأقسام: documents, experience, staff, equipment, samples, certificates, guarantees, rejectionRisks, specialConditions.
+لكل بند: عنوان، تفاصيل مختصرة، رقم صفحة إن أمكن، وهل مطلوب. لا تكرر البنود.`,
+    schema: checklistSchema as unknown as Record<string, unknown>,
   });
+}
 
-  const draft = mergeExtraction({
-    tenderInfo: header.tenderInfo,
-    submissionMethod: submission.submissionMethod,
-    checklist,
-    summary: header.summary,
-  });
-
-  await input.onProgress?.(80, "مراجعة وتدقيق النتائج");
-
-  const review = await runStructuredStage<{
+async function reviewDraft(opts: {
+  client: OpenAI;
+  model: string;
+  draft: AnalysisExtraction;
+}) {
+  // Never re-attach PDFs here — draft + large PDF exceeds model context.
+  const compactDraft = JSON.stringify(opts.draft);
+  return runStructuredStage<{
     tenderInfo: AnalysisExtraction["tenderInfo"];
     submissionMethod: AnalysisExtraction["submissionMethod"];
     documents: AnalysisExtraction["documents"];
@@ -405,22 +443,15 @@ export async function analyzePdfWithOpenAI(input: {
     confidence: number;
     reviewNotes: string | null;
   }>({
-    client,
-    model,
-    fileContents,
+    client: opts.client,
+    model: opts.model,
+    fileContents: [],
     name: "tender_review",
-    instruction: `المرحلة 4/4 — راجع المسودة التالية وصحّحها بالرجوع إلى ملفات PDF المرفوعة فقط.${filesNote}
+    instruction: `المرحلة الأخيرة — راجع المسودة التالية فقط (بدون ملف PDF). لا تختلق مطلوبات جديدة غير موجودة في المسودة.
+أزل التكرار، وحسّن الملخص، وأعطِ confidence من 0 إلى 100، وreviewNotes بجملة واحدة.
 
-مسودة الاستخراج الحالية:
-${JSON.stringify(draft, null, 2)}
-
-المطلوب:
-1) املأ أي حقول null في tenderInfo إذا كانت موجودة صراحة في الملف (خصوصاً الجهة، رقم المناقصة، الموعد، العملة، مدة التنفيذ، سريان العرض).
-2) صحّح submissionMethod إن كانت المسودة تقول "لا" بينما الملف يذكر منصة/بريد/تسليم.
-3) أزل التكرار من القوائم وأكمل أي مطلوب واضح ناقص.
-4) حسّن الملخص ليكون دقيقاً ومختصراً.
-5) أعطِ confidence عدداً صحيحاً من 0 إلى 100 فقط (ليس كسراً مثل 0.9). الثقة العالية تتطلب وجود الجهة ورقم المرجع وموعد أو طريقة تقديم + قائمة مطلوبات معقولة.
-6) reviewNotes: جملة واحدة عن أبرز ما تم تصحيحه أو ما بقي غير مؤكد.`,
+المسودة:
+${compactDraft}`,
     schema: {
       type: "object",
       additionalProperties: false,
@@ -458,6 +489,61 @@ ${JSON.stringify(draft, null, 2)}
       ],
     },
   });
+}
+
+async function analyzeFilesTogether(opts: {
+  client: OpenAI;
+  model: string;
+  files: Array<{ fileUrl: string; fileName: string }>;
+  onProgress?: StageProgress;
+}): Promise<AnalysisExtraction> {
+  const fileContents = opts.files.map((file) =>
+    toFileContent(file.fileUrl, "low"),
+  );
+  const filesNote =
+    opts.files.length > 1
+      ? `\nملاحظة: أُرفقت ${opts.files.length} ملفات (${opts.files
+          .map((f) => f.fileName)
+          .join("، ")}). ادمج النتيجة.`
+      : "";
+
+  await opts.onProgress?.(20, "استخراج بيانات المناقصة");
+  const header = await extractHeader({
+    client: opts.client,
+    model: opts.model,
+    fileContents,
+    filesNote,
+  });
+
+  await opts.onProgress?.(40, "استخراج طريقة التقديم");
+  const submission = await extractSubmission({
+    client: opts.client,
+    model: opts.model,
+    fileContents,
+    filesNote,
+  });
+
+  await opts.onProgress?.(60, "استخراج المطلوبات والقائمة");
+  const checklist = await extractChecklist({
+    client: opts.client,
+    model: opts.model,
+    fileContents,
+    filesNote,
+  });
+
+  const draft = mergeExtraction({
+    tenderInfo: header.tenderInfo,
+    submissionMethod: submission.submissionMethod,
+    checklist,
+    summary: header.summary,
+  });
+
+  await opts.onProgress?.(80, "مراجعة وتدقيق النتائج");
+  const review = await reviewDraft({
+    client: opts.client,
+    model: opts.model,
+    draft,
+  });
 
   const reviewed = analysisExtractionSchema.parse({
     tenderInfo: review.tenderInfo,
@@ -483,4 +569,281 @@ ${JSON.stringify(draft, null, 2)}
       ? `${reviewed.summary || ""}\n\nملاحظة المراجعة: ${review.reviewNotes}`.trim()
       : reviewed.summary,
   };
+}
+
+/** One-file-at-a-time path for PDFs that exceed a single context window. */
+async function analyzeFilesChunked(opts: {
+  client: OpenAI;
+  model: string;
+  files: Array<{ fileUrl: string; fileName: string }>;
+  onProgress?: StageProgress;
+}): Promise<AnalysisExtraction> {
+  const checklistParts: ChecklistSections[] = [];
+  let tenderInfo: AnalysisExtraction["tenderInfo"] | null = null;
+  let submissionMethod: AnalysisExtraction["submissionMethod"] | null = null;
+  let summary: string | null = null;
+
+  for (let index = 0; index < opts.files.length; index += 1) {
+    const file = opts.files[index]!;
+    const fileContents = [toFileContent(file.fileUrl, "low")];
+    const filesNote = `\nملف ${index + 1}/${opts.files.length}: ${file.fileName}`;
+    const baseProgress = 15 + Math.round((index / opts.files.length) * 55);
+
+    await opts.onProgress?.(
+      baseProgress,
+      `تحليل مجزأ: ${file.fileName} (${index + 1}/${opts.files.length})`,
+    );
+
+    if (!tenderInfo) {
+      const header = await extractHeader({
+        client: opts.client,
+        model: opts.model,
+        fileContents,
+        filesNote,
+      });
+      tenderInfo = header.tenderInfo;
+      summary = header.summary;
+    } else {
+      // Enrich null header fields from later files when possible.
+      try {
+        const header = await extractHeader({
+          client: opts.client,
+          model: opts.model,
+          fileContents,
+          filesNote,
+        });
+        tenderInfo = {
+          agency: preferText(tenderInfo.agency, header.tenderInfo.agency),
+          referenceNumber: preferText(
+            tenderInfo.referenceNumber,
+            header.tenderInfo.referenceNumber,
+          ),
+          deadline: preferText(tenderInfo.deadline, header.tenderInfo.deadline),
+          executionDuration: preferText(
+            tenderInfo.executionDuration,
+            header.tenderInfo.executionDuration,
+          ),
+          guarantees: preferText(
+            tenderInfo.guarantees,
+            header.tenderInfo.guarantees,
+          ),
+          currency: preferText(tenderInfo.currency, header.tenderInfo.currency),
+          bidValidity: preferText(
+            tenderInfo.bidValidity,
+            header.tenderInfo.bidValidity,
+          ),
+        };
+        summary = preferText(summary, header.summary);
+      } catch (error) {
+        if (!isContextOverflowError(error)) throw error;
+      }
+    }
+
+    if (!submissionMethod) {
+      const submission = await extractSubmission({
+        client: opts.client,
+        model: opts.model,
+        fileContents,
+        filesNote,
+      });
+      submissionMethod = submission.submissionMethod;
+    }
+
+    const checklist = await extractChecklist({
+      client: opts.client,
+      model: opts.model,
+      fileContents,
+      filesNote,
+    });
+    checklistParts.push(checklist);
+  }
+
+  if (!tenderInfo || !submissionMethod) {
+    throw new Error(
+      "تعذر استخراج بيانات المناقصة من الملف الكبير. جرّب تقسيم PDF إلى أجزاء أصغر (مثلاً 40–60 صفحة) أو استخدم نموذجاً بسياق أكبر مثل gpt-4.1.",
+    );
+  }
+
+  const draft = mergeExtraction({
+    tenderInfo,
+    submissionMethod,
+    checklist: mergeChecklistItems(checklistParts),
+    summary,
+  });
+
+  await opts.onProgress?.(85, "مراجعة النتائج المدمجة");
+  try {
+    const review = await reviewDraft({
+      client: opts.client,
+      model: opts.model,
+      draft,
+    });
+    const reviewed = analysisExtractionSchema.parse({
+      tenderInfo: review.tenderInfo,
+      submissionMethod: review.submissionMethod,
+      documents: review.documents,
+      experience: review.experience,
+      staff: review.staff,
+      equipment: review.equipment,
+      samples: review.samples,
+      certificates: review.certificates,
+      guarantees: review.guarantees,
+      rejectionRisks: review.rejectionRisks,
+      specialConditions: review.specialConditions,
+      summary: review.summary,
+      confidence: review.confidence,
+    });
+    const confidence = resolveConfidence(reviewed, review.confidence);
+    return {
+      ...reviewed,
+      confidence,
+      summary: review.reviewNotes
+        ? `${reviewed.summary || ""}\n\nملاحظة المراجعة: ${review.reviewNotes}`.trim()
+        : reviewed.summary,
+    };
+  } catch {
+    // If review itself fails (huge checklist), return the merged draft.
+    const confidence = resolveConfidence(draft, draft.confidence);
+    return { ...draft, confidence };
+  }
+}
+
+async function downloadPdfBytes(
+  client: OpenAI,
+  fileUrl: string,
+): Promise<Uint8Array> {
+  if (fileUrl.startsWith("openai:")) {
+    const fileId = fileUrl.slice("openai:".length);
+    const content = await client.files.content(fileId);
+    return new Uint8Array(await content.arrayBuffer());
+  }
+
+  const response = await fetch(fileUrl);
+  if (!response.ok) {
+    throw new Error("تعذر تنزيل ملف PDF لتقسيمه قبل التحليل");
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+/** Split one large PDF into page-range chunks uploaded back to OpenAI Files. */
+async function splitPdfIntoOpenAIChunks(opts: {
+  client: OpenAI;
+  fileUrl: string;
+  fileName: string;
+  pagesPerChunk?: number;
+}): Promise<Array<{ fileUrl: string; fileName: string }>> {
+  const pagesPerChunk = opts.pagesPerChunk ?? PAGES_PER_ANALYSIS_CHUNK;
+  const bytes = await downloadPdfBytes(opts.client, opts.fileUrl);
+  const source = await PDFDocument.load(bytes, { ignoreEncryption: true });
+  const totalPages = source.getPageCount();
+
+  if (totalPages <= pagesPerChunk) {
+    return [{ fileUrl: opts.fileUrl, fileName: opts.fileName }];
+  }
+
+  const chunks: Array<{ fileUrl: string; fileName: string }> = [];
+  for (let start = 0; start < totalPages; start += pagesPerChunk) {
+    const end = Math.min(start + pagesPerChunk, totalPages);
+    const part = await PDFDocument.create();
+    const pageIndexes = Array.from(
+      { length: end - start },
+      (_, offset) => start + offset,
+    );
+    const copied = await part.copyPages(source, pageIndexes);
+    for (const page of copied) {
+      part.addPage(page);
+    }
+
+    const partBytes = await part.save();
+    const uploaded = await opts.client.files.create({
+      file: await toFile(
+        partBytes,
+        `${opts.fileName.replace(/\.pdf$/i, "")}-p${start + 1}-${end}.pdf`,
+        { type: "application/pdf" },
+      ),
+      purpose: "user_data",
+    });
+
+    chunks.push({
+      fileUrl: `openai:${uploaded.id}`,
+      fileName: `${opts.fileName} (صفحات ${start + 1}–${end})`,
+    });
+  }
+
+  return chunks;
+}
+
+export async function analyzePdfWithOpenAI(input: {
+  fileUrl?: string;
+  fileName?: string;
+  files?: Array<{ fileUrl: string; fileName: string }>;
+  onProgress?: StageProgress;
+}): Promise<AnalysisExtraction> {
+  const files =
+    input.files && input.files.length > 0
+      ? input.files
+      : input.fileUrl && input.fileName
+        ? [{ fileUrl: input.fileUrl, fileName: input.fileName }]
+        : [];
+
+  const config = await getGlobalOpenAIConfig();
+  if (!config.apiKey) {
+    return demoExtraction(files.map((f) => f.fileName).join(" + ") || "demo.pdf");
+  }
+  if (files.length === 0) {
+    throw new Error("لا توجد ملفات للتحليل");
+  }
+  if (files.some((file) => file.fileUrl.startsWith("blob:"))) {
+    throw new Error(
+      "رابط الملف محلي وغير صالح للتحليل. أعد رفع ملفات PDF من صفحة تحليل جديد.",
+    );
+  }
+
+  const client = new OpenAI({ apiKey: config.apiKey });
+  const model = config.model;
+
+  try {
+    return await analyzeFilesTogether({
+      client,
+      model,
+      files,
+      onProgress: input.onProgress,
+    });
+  } catch (error) {
+    if (!isContextOverflowError(error)) {
+      throw error;
+    }
+
+    await input.onProgress?.(18, "الملف كبير — تقسيم وتحليل مجزأ");
+
+    try {
+      let workFiles = files;
+
+      // Split every oversized source PDF into page-range chunks.
+      const expanded: Array<{ fileUrl: string; fileName: string }> = [];
+      for (const file of files) {
+        const parts = await splitPdfIntoOpenAIChunks({
+          client,
+          fileUrl: file.fileUrl,
+          fileName: file.fileName,
+        });
+        expanded.push(...parts);
+      }
+      workFiles = expanded;
+
+      return await analyzeFilesChunked({
+        client,
+        model,
+        files: workFiles,
+        onProgress: input.onProgress,
+      });
+    } catch (retryError) {
+      if (isContextOverflowError(retryError)) {
+        throw new Error(
+          "الملف أكبر من نافذة سياق نموذج الذكاء الاصطناعي الحالي. قسّم دفتر الشروط إلى عدة ملفات PDF (مثلاً كل ملف 40–60 صفحة) وارفعها معاً في نفس التحليل، أو غيّر النموذج في إعدادات الإدارة إلى gpt-4.1 / gpt-4o.",
+        );
+      }
+      throw retryError;
+    }
+  }
 }
