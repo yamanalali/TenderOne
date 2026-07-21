@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { getAnalysisDetail } from "@/app/actions/analyses";
 import { AnalysisPoller } from "@/components/analysis-poller";
+import { ChecklistExportButtons } from "@/components/checklist-export-buttons";
 import { ChecklistToggle } from "@/components/checklist-toggle";
 import { RetryAnalysisButton } from "@/components/retry-analysis-button";
 import { BackLink } from "@/components/ui/back-link";
@@ -26,6 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import type { AnalysisExtraction } from "@/lib/analysis/types";
+import { SECTION_LABELS } from "@/lib/analysis/types";
 import {
   analysisStatusColor,
   analysisStatusLabel,
@@ -55,7 +57,7 @@ function InfoTile({
             className="mt-1 break-words text-sm font-bold text-slate-800"
             dir={dir}
           >
-            {value || "غير محدد"}
+            {value || "غير مذكور في الملفات المحملة"}
           </p>
         </div>
       </div>
@@ -85,7 +87,7 @@ function MethodRow({
             : "bg-slate-100 text-slate-400"
         }`}
       >
-        {enabled ? "متاح" : "غير متاح"}
+        {enabled ? "متاح" : "غير مذكور في الملفات المحملة"}
       </span>
     </div>
   );
@@ -100,7 +102,16 @@ export default async function AnalysisDetailPage({
   const detail = await getAnalysisDetail(id);
   if (!detail) notFound();
 
-  const { analysis, items } = detail;
+  const { analysis, items, files } = detail;
+  const sourceFiles =
+    files.length > 0
+      ? files
+      : [
+          {
+            id: "primary",
+            fileName: analysis.fileName,
+          },
+        ];
   const extracted = (analysis.extractedData || null) as AnalysisExtraction | null;
   const inProgress =
     analysis.status === "queued" || analysis.status === "processing";
@@ -143,8 +154,18 @@ export default async function AnalysisDetailPage({
                 {analysis.fileName}
               </h1>
               <p className="mt-1 text-xs text-slate-400">
-                تقرير تحليل ذكي لمتطلبات ووثائق المناقصة
+                تقرير تحليل لمتطلبات ووثائق المناقصة
+                {sourceFiles.length > 1
+                  ? ` — ${sourceFiles.length} ملفات`
+                  : ""}
               </p>
+              {sourceFiles.length > 1 && (
+                <ul className="mt-3 space-y-1 text-xs text-slate-400">
+                  {sourceFiles.map((file) => (
+                    <li key={file.id}>• {file.fileName}</li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
 
@@ -294,29 +315,45 @@ export default async function AnalysisDetailPage({
                     </CardDescription>
                   </div>
                 </div>
-                {items.length > 0 && (
-                  <div className="min-w-40">
-                    <div className="mb-1.5 flex justify-between text-[10px] font-bold text-slate-400">
-                      <span>نسبة الإنجاز</span>
-                      <span>{checklistProgress}%</span>
+                <div className="flex flex-col items-stretch gap-3 sm:items-end">
+                  <ChecklistExportButtons
+                    analysisId={id}
+                    disabled={items.length === 0}
+                  />
+                  {items.length > 0 && (
+                    <div className="min-w-40">
+                      <div className="mb-1.5 flex justify-between text-[10px] font-bold text-slate-400">
+                        <span>نسبة الإنجاز</span>
+                        <span>{checklistProgress}%</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full bg-teal-600 transition-all"
+                          style={{ width: `${checklistProgress}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                      <div
-                        className="h-full rounded-full bg-teal-600 transition-all"
-                        style={{ width: `${checklistProgress}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
-              <div className="mt-5 space-y-3">
+              <div
+                id="checklist-print-area"
+                className="mt-5 space-y-3 bg-white"
+                dir="rtl"
+              >
+                <div className="mb-4 hidden print:block">
+                  <h2 className="text-xl font-black">قائمة المطلوبات</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {analysis.fileName}
+                  </p>
+                </div>
                 {items.length === 0 && (
                   <div className="rounded-2xl border border-dashed border-slate-200 px-5 py-8 text-center">
                     <FileCheck2 className="mx-auto h-7 w-7 text-slate-300" />
                     <p className="mt-2 text-sm text-slate-500">
                       {analysis.status === "completed"
-                        ? "لم يتم العثور على مطلوبات في الملف"
+                        ? "لم يتم العثور على مطلوبات في الملفات المحملة"
                         : "ستظهر المطلوبات هنا بعد اكتمال التحليل"}
                     </p>
                   </div>
@@ -330,7 +367,7 @@ export default async function AnalysisDetailPage({
                         : "border-slate-200 bg-white hover:border-teal-200"
                     }`}
                   >
-                    <div className="pt-0.5">
+                    <div className="pt-0.5 no-print">
                       <ChecklistToggle
                         itemId={item.id}
                         isCompleted={item.isCompleted}
@@ -349,7 +386,7 @@ export default async function AnalysisDetailPage({
                         </p>
                         <div className="flex flex-wrap gap-1.5">
                           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600">
-                            {item.section}
+                            {SECTION_LABELS[item.section] || item.section}
                           </span>
                           <span
                             className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${
@@ -369,6 +406,7 @@ export default async function AnalysisDetailPage({
                       )}
                       <p className="mt-2 text-[11px] font-semibold text-slate-400">
                         الصفحة {item.pageNumber ?? "—"}
+                        {item.isCompleted ? " — مكتمل" : ""}
                       </p>
                     </div>
                   </div>

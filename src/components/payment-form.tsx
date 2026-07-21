@@ -125,12 +125,16 @@ export function PaymentForm({
   bankName,
   bankAccountName,
   bankIban,
+  contactEmail,
+  contactPhone,
   initialProductId = "",
 }: {
   products: Product[];
   bankName: string;
   bankAccountName: string;
   bankIban: string;
+  contactEmail: string;
+  contactPhone: string;
   initialProductId?: string;
 }) {
   const { toast } = useToast();
@@ -241,14 +245,6 @@ export function PaymentForm({
                               {product.descriptionAr || details.summary}
                             </p>
                           </div>
-                          <div className="shrink-0 border-r border-slate-100 pr-4 text-left">
-                            <span className="text-xl font-black text-[#071426]">
-                              {product.price}
-                            </span>
-                            <span className="block text-xs font-bold text-slate-500">
-                              {product.currency}
-                            </span>
-                          </div>
                         </button>
                       );
                     })}
@@ -270,7 +266,8 @@ export function PaymentForm({
                 <div>
                   <CardTitle className="text-white">معلومات الدفع</CardTitle>
                   <p className="mt-1 text-sm text-slate-300">
-                    راجع طلبك ثم حوّل المبلغ وارفع الإيصال.
+                    راجع طلبك ثم حوّل حسب الاتفاق أو القائمة المعتمدة، وارفع
+                    الإيصال.
                   </p>
                 </div>
               </div>
@@ -280,17 +277,11 @@ export function PaymentForm({
                   const details = getPurchaseDetails(selected);
                   return (
                     <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <p className="text-xs font-bold text-amber-300">
-                            الخدمة المختارة
-                          </p>
-                          <p className="mt-1 font-black">{selected.nameAr}</p>
-                        </div>
-                        <p className="shrink-0 text-xl font-black text-amber-300">
-                          {selected.price}{" "}
-                          <span className="text-xs">{selected.currency}</span>
+                      <div>
+                        <p className="text-xs font-bold text-amber-300">
+                          الخدمة المختارة
                         </p>
+                        <p className="mt-1 font-black">{selected.nameAr}</p>
                       </div>
                       <p className="mt-3 text-sm leading-6 text-slate-300">
                         {details.summary}
@@ -317,17 +308,46 @@ export function PaymentForm({
                 })()
               ) : (
                 <div className="mt-5 rounded-2xl border border-dashed border-amber-300/40 bg-white/5 p-5 text-center text-sm text-slate-300">
-                  اختر خدمة من القسم المقابل لتظهر قيمة الطلب وتتمكن من إرسال
-                  إثبات التحويل.
+                  اختر خدمة من القسم المقابل لتتمكن من إرسال إثبات التحويل.
                 </div>
               )}
             </div>
 
             <div className="space-y-5 p-5">
               <div>
+                <p className="font-black text-slate-900">للتواصل قبل التحويل</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  لست متأكداً من المبلغ أو الخدمة المناسبة؟ تواصل معنا أولاً.
+                </p>
+              </div>
+              <div className="space-y-3 rounded-xl bg-amber-50 p-4 text-sm text-slate-700">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs text-slate-500">البريد</p>
+                    <p className="mt-0.5 font-bold" dir="ltr">
+                      {contactEmail}
+                    </p>
+                  </div>
+                  <CopyButton value={contactEmail} label="نسخ البريد" />
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs text-slate-500">الهاتف</p>
+                    <p className="mt-0.5 font-bold" dir="ltr">
+                      {contactPhone}
+                    </p>
+                  </div>
+                  <CopyButton
+                    value={contactPhone.replace(/\s+/g, "")}
+                    label="نسخ الهاتف"
+                  />
+                </div>
+              </div>
+
+              <div>
                 <p className="font-black text-slate-900">الحساب البنكي</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  حوّل قيمة الخدمة المختارة إلى البيانات التالية.
+                  حوّل حسب الاتفاق أو قائمة الأسعار المعتمدة إلى البيانات التالية.
                 </p>
               </div>
               <div className="space-y-3 rounded-xl bg-slate-50 p-4 text-sm text-slate-700">

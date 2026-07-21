@@ -1,8 +1,11 @@
 import { Mail, MapPin, MessageSquare, Phone } from "lucide-react";
 import { ContactForm } from "@/components/contact-form";
 import { PageHero } from "@/components/marketing/page-hero";
+import { getAppSettings } from "@/lib/settings";
 
-export default function ContactPage() {
+export default async function ContactPage() {
+  const settings = await getAppSettings();
+
   return (
     <>
       <PageHero
@@ -17,17 +20,17 @@ export default function ContactPage() {
             {
               icon: Mail,
               title: "البريد",
-              value: "hello@tenderone.app",
+              value: settings.contactEmail,
             },
             {
               icon: Phone,
               title: "الهاتف",
-              value: "+966 50 000 0000",
+              value: settings.contactPhone,
             },
             {
               icon: MapPin,
               title: "المقر",
-              value: "الرياض، المملكة العربية السعودية",
+              value: "غازي عنتاب، تركيا",
             },
           ].map((item) => {
             const Icon = item.icon;
@@ -44,7 +47,9 @@ export default function ContactPage() {
                     <p className="text-xs font-bold text-slate-500">
                       {item.title}
                     </p>
-                    <p className="mt-1 font-black text-white">{item.value}</p>
+                    <p className="mt-1 font-black text-white" dir="ltr">
+                      {item.value}
+                    </p>
                   </div>
                 </div>
               </div>

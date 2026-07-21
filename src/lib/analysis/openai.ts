@@ -162,7 +162,7 @@ function submissionMethodSchema() {
 async function runStructuredStage<T>(opts: {
   client: OpenAI;
   model: string;
-  fileContent: FileContent;
+  fileContents: FileContent[];
   name: string;
   instruction: string;
   schema: Record<string, unknown>;
@@ -178,7 +178,7 @@ async function runStructuredStage<T>(opts: {
         role: "user",
         content: [
           { type: "input_text", text: opts.instruction },
-          opts.fileContent as never,
+          ...(opts.fileContents as never[]),
         ],
       },
     ],
@@ -193,6 +193,18 @@ async function runStructuredStage<T>(opts: {
   });
 
   return JSON.parse(response.output_text) as T;
+}
+
+function toFileContent(fileUrl: string): FileContent {
+  return fileUrl.startsWith("openai:")
+    ? {
+        type: "input_file",
+        file_id: fileUrl.slice("openai:".length),
+      }
+    : {
+        type: "input_file",
+        file_url: fileUrl,
+      };
 }
 
 function mergeExtraction(parts: {
@@ -223,31 +235,40 @@ function mergeExtraction(parts: {
 }
 
 export async function analyzePdfWithOpenAI(input: {
-  fileUrl: string;
-  fileName: string;
+  fileUrl?: string;
+  fileName?: string;
+  files?: Array<{ fileUrl: string; fileName: string }>;
   onProgress?: StageProgress;
 }): Promise<AnalysisExtraction> {
+  const files =
+    input.files && input.files.length > 0
+      ? input.files
+      : input.fileUrl && input.fileName
+        ? [{ fileUrl: input.fileUrl, fileName: input.fileName }]
+        : [];
+
   const config = await getGlobalOpenAIConfig();
   if (!config.apiKey) {
-    return demoExtraction(input.fileName);
+    return demoExtraction(files.map((f) => f.fileName).join(" + ") || "demo.pdf");
   }
-  if (input.fileUrl.startsWith("blob:")) {
+  if (files.length === 0) {
+    throw new Error("لا توجد ملفات للتحليل");
+  }
+  if (files.some((file) => file.fileUrl.startsWith("blob:"))) {
     throw new Error(
-      "رابط الملف محلي وغير صالح للتحليل. أعد رفع ملف PDF من صفحة تحليل جديد.",
+      "رابط الملف محلي وغير صالح للتحليل. أعد رفع ملفات PDF من صفحة تحليل جديد.",
     );
   }
 
   const client = new OpenAI({ apiKey: config.apiKey });
   const model = config.model;
-  const fileContent: FileContent = input.fileUrl.startsWith("openai:")
-    ? {
-        type: "input_file",
-        file_id: input.fileUrl.slice("openai:".length),
-      }
-    : {
-        type: "input_file",
-        file_url: input.fileUrl,
-      };
+  const fileContents = files.map((file) => toFileContent(file.fileUrl));
+  const filesNote =
+    files.length > 1
+      ? `\nملاحظة: أُرفقت ${files.length} ملفات مرتبطة بنفس المناقصة (${files
+          .map((f) => f.fileName)
+          .join("، ")}). ادمج المعلومات من كل الملفات في نتيجة واحدة شاملة. إذا لم تُذكر معلومة في أي ملف ضع null.`
+      : "";
 
   await input.onProgress?.(20, "استخراج بيانات المناقصة");
 
@@ -257,9 +278,9 @@ export async function analyzePdfWithOpenAI(input: {
   }>({
     client,
     model,
-    fileContent,
+    fileContents,
     name: "tender_header",
-    instruction: `المرحلة 1/4 — استخرج فقط بيانات رأس المناقصة من الصفحة الأولى والصفحات التعريفية:
+    instruction: `المرحلة 1/4 — استخرج فقط بيانات رأس المناقصة من الصفحة الأولى والصفحات التعريفية:${filesNote}
 - agency: اسم الجهة الشارية / الإدارة / الوزارة
 - referenceNumber: رقم الصفقة أو المناقصة أو المرجع
 - deadline: آخر موعد لتقديم العروض (مع الساعة إن وُجدت)
@@ -286,9 +307,9 @@ export async function analyzePdfWithOpenAI(input: {
   }>({
     client,
     model,
-    fileContent,
+    fileContents,
     name: "tender_submission",
-    instruction: `المرحلة 2/4 — ركّز فقط على طريقة تقديم العروض:
+    instruction: `المرحلة 2/4 — ركّز فقط على طريقة تقديم العروض:${filesNote}
 حدّد بوضوح هل التقديم عبر منصة إلكترونية، بريد إلكتروني، تسليم يدوي/ظرف مغلق، أو مزيج.
 املأ العنوان أو رابط المنصة أو البريد إن وُجد، وضع specialInstructions لأي تعليمات خاصة (ظرفين، ختم، موعد فتح المغلفات...).
 إذا لم يُذكر أسلوب معيّن صراحةً اتركه false وnull بدون افتراض.`,
@@ -317,9 +338,9 @@ export async function analyzePdfWithOpenAI(input: {
   }>({
     client,
     model,
-    fileContent,
+    fileContents,
     name: "tender_checklist",
-    instruction: `المرحلة 3/4 — استخرج Checklist كاملة للمطلوبات من كل الملف:
+    instruction: `المرحلة 3/4 — استخرج Checklist كاملة للمطلوبات من كل الملفات المرفوعة:
 - documents: الملاحق والوثائق والمستندات المطلوب إرفاقها
 - experience: شروط الخبرة والمؤهلات الفنية/المالية
 - staff: الكادر المطلوب
@@ -386,9 +407,9 @@ export async function analyzePdfWithOpenAI(input: {
   }>({
     client,
     model,
-    fileContent,
+    fileContents,
     name: "tender_review",
-    instruction: `المرحلة 4/4 — راجع المسودة التالية وصحّحها بالرجوع إلى ملف PDF فقط.
+    instruction: `المرحلة 4/4 — راجع المسودة التالية وصحّحها بالرجوع إلى ملفات PDF المرفوعة فقط.${filesNote}
 
 مسودة الاستخراج الحالية:
 ${JSON.stringify(draft, null, 2)}

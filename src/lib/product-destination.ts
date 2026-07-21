@@ -23,11 +23,25 @@ export function paymentsHrefForType(
 export function getProductDestination(
   product: Pick<Product, "id" | "type" | "metadata">,
 ): ProductDestination {
+  const metadata = product.metadata as {
+    serviceCode?: string;
+    fulfillment?: string;
+  } | null;
+
+  if (metadata?.fulfillment === "manual") {
+    return {
+      href: "/my-services",
+      label: "متابعة الخدمة",
+      description:
+        "خدمة تُنفَّذ يدوياً بعد الموافقة — سنتواصل معك لإكمال المطلوب.",
+    };
+  }
+
   if (product.type === "analysis_credit") {
     return {
       href: "/analyses/new",
       label: "ابدأ تحليل ملف",
-      description: "ارفع دفتر الشروط وسيُخصم تحليل واحد من رصيدك.",
+      description: "ارفع كل ملفات المناقصة المرتبطة وسيُخصم تحليل واحد من رصيدك.",
     };
   }
 
@@ -47,7 +61,6 @@ export function getProductDestination(
     };
   }
 
-  const metadata = product.metadata as { serviceCode?: string } | null;
   if (metadata?.serviceCode === "documents_pack") {
     return {
       href: "/templates",
@@ -57,8 +70,8 @@ export function getProductDestination(
   }
 
   return {
-    href: "/dashboard",
+    href: "/my-services",
     label: "استخدم الخدمة",
-    description: "افتح مساحة العمل للوصول إلى الخدمة المفعّلة.",
+    description: "افتح خدماتك للوصول إلى الخدمة المفعّلة.",
   };
 }

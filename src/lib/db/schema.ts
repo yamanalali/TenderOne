@@ -217,6 +217,18 @@ export const analyses = pgTable("analyses", {
   completedAt: timestamp("completed_at", { withTimezone: true }),
 });
 
+export const analysisFiles = pgTable("analysis_files", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  analysisId: uuid("analysis_id")
+    .notNull()
+    .references(() => analyses.id, { onDelete: "cascade" }),
+  fileName: varchar("file_name", { length: 255 }).notNull(),
+  fileUrl: text("file_url").notNull(),
+  filePathname: text("file_pathname").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const checklistItems = pgTable("checklist_items", {
   id: uuid("id").defaultRandom().primaryKey(),
   analysisId: uuid("analysis_id")
@@ -402,7 +414,15 @@ export const analysesRelations = relations(analyses, ({ one, many }) => ({
     fields: [analyses.companyId],
     references: [companies.id],
   }),
+  files: many(analysisFiles),
   checklistItems: many(checklistItems),
+}));
+
+export const analysisFilesRelations = relations(analysisFiles, ({ one }) => ({
+  analysis: one(analyses, {
+    fields: [analysisFiles.analysisId],
+    references: [analyses.id],
+  }),
 }));
 
 export type User = typeof users.$inferSelect;

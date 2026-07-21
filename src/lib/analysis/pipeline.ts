@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { analyses, checklistItems } from "@/lib/db/schema";
+import { analyses, analysisFiles, checklistItems } from "@/lib/db/schema";
 import { analyzePdfWithOpenAI } from "@/lib/analysis/openai";
 import {
   SECTION_LABELS,
@@ -18,6 +18,25 @@ export async function runAnalysisPipeline(analysisId: string) {
     throw new Error("Analysis not found");
   }
 
+  const linkedFiles = await db
+    .select()
+    .from(analysisFiles)
+    .where(eq(analysisFiles.analysisId, analysisId))
+    .orderBy(asc(analysisFiles.sortOrder));
+
+  const files =
+    linkedFiles.length > 0
+      ? linkedFiles.map((file) => ({
+          fileUrl: file.fileUrl,
+          fileName: file.fileName,
+        }))
+      : [
+          {
+            fileUrl: analysis.fileUrl,
+            fileName: analysis.fileName,
+          },
+        ];
+
   await db
     .update(analyses)
     .set({ status: "processing", progress: 10, updatedAt: new Date() })
@@ -30,8 +49,7 @@ export async function runAnalysisPipeline(analysisId: string) {
       .where(eq(analyses.id, analysisId));
 
     const extracted = await analyzePdfWithOpenAI({
-      fileUrl: analysis.fileUrl,
-      fileName: analysis.fileName,
+      files,
       onProgress: async (progress) => {
         await db
           .update(analyses)

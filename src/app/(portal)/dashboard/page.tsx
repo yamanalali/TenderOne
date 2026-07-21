@@ -138,7 +138,7 @@ export default async function DashboardPage() {
         >
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-xs font-bold text-slate-500">تحليلاتك</p>
+              <p className="text-xs font-bold text-slate-500">التحليلات المكتملة</p>
               <p className="mt-2 text-4xl font-black text-[#071426]">
                 {stats.analysesCount}
               </p>
@@ -190,7 +190,7 @@ export default async function DashboardPage() {
       <section>
         <div className="mb-5 flex items-end justify-between">
           <div>
-            <p className="text-xs font-black text-amber-600">مساحة العمل</p>
+            <p className="text-xs font-black text-amber-600">مركز الخدمات</p>
             <h2 className="mt-1 text-2xl font-black text-[#071426]">
               أدواتك المؤسسية
             </h2>

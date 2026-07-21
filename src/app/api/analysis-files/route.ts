@@ -30,7 +30,9 @@ export async function POST(request: Request) {
   ]);
   if (file.size > settings.maxUploadMb * 1024 * 1024) {
     return NextResponse.json(
-      { error: `حجم الملف يتجاوز الحد المسموح (${settings.maxUploadMb} MB)` },
+      {
+        error: `حجم الملف «${file.name}» يتجاوز الحد المسموح (${settings.maxUploadMb} MB). قسّم المناقصة إلى عدة ملفات PDF أصغر وارفعها معاً في نفس التحليل.`,
+      },
       { status: 400 },
     );
   }

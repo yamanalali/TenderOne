@@ -27,19 +27,16 @@ export default async function HomePage() {
         <div className="relative">
           <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-amber-300/25 bg-amber-300/8 px-4 py-2 text-xs font-bold text-amber-200 backdrop-blur">
             <Sparkles className="h-3.5 w-3.5" />
-            الجيل الجديد من إدارة ملفات المناقصات
+            منصة تجهيز ملفات المناقصات
           </div>
 
-          <h1 className="max-w-3xl text-5xl font-black leading-[1.08] tracking-[-0.04em] md:text-7xl">
-            لا تجهّز عرضاً فقط.
-            <span className="mt-2 block bg-gradient-to-l from-amber-200 via-yellow-400 to-amber-600 bg-clip-text text-transparent">
-              ابنِ أفضل فرصة للفوز.
-            </span>
+          <h1 className="max-w-3xl text-4xl font-black leading-[1.15] tracking-[-0.03em] md:text-6xl">
+            قدّم عرضك بثقة، والتزم بمتطلبات المناقصة بدقة.
           </h1>
 
           <p className="mt-7 max-w-2xl text-lg leading-8 text-slate-400 md:text-xl">
-            منظومة تشغيل متكاملة تحوّل دفاتر الشروط المعقدة إلى قرارات واضحة،
-            متطلبات منظمة، وملفات مؤسسية جاهزة للعمل.
+            نوفر لك خبرة احترافية في تحليل دفاتر الشروط، تجهيز المستندات، وتوفير
+            الوقت والجهد لتزيد فرص نجاحك.
           </p>
 
           <div className="mt-9 flex flex-wrap items-center gap-3">
@@ -47,14 +44,14 @@ export default async function HomePage() {
               href={session ? destination : "/register"}
               className="group inline-flex h-14 items-center gap-3 rounded-2xl bg-gradient-to-l from-amber-300 to-yellow-500 px-7 text-sm font-black text-[#091426] shadow-[0_0_45px_rgba(245,158,11,0.18)] transition hover:-translate-y-0.5 hover:shadow-[0_0_60px_rgba(245,158,11,0.3)]"
             >
-              دخول مركز العمليات
+              ابدأ الآن
               <ArrowLeft className="h-5 w-5 transition group-hover:-translate-x-1" />
             </Link>
             <Link
-              href="/services"
+              href="/contact"
               className="inline-flex h-14 items-center gap-3 rounded-2xl border border-white/12 bg-white/5 px-7 text-sm font-bold text-white backdrop-blur transition hover:border-white/25 hover:bg-white/10"
             >
-              استكشف الخدمات
+              تواصل معنا
               <FileText className="h-4 w-4 text-slate-400" />
             </Link>
           </div>

@@ -308,6 +308,23 @@ export function SettingsAdminForm({ settings }: { settings: AdminSettings }) {
           <Input name="bankIban" defaultValue={settings.bankIban} />
         </div>
         <div>
+          <Label>بريد التواصل للدفع</Label>
+          <Input
+            name="contactEmail"
+            type="email"
+            defaultValue={settings.contactEmail}
+            dir="ltr"
+          />
+        </div>
+        <div>
+          <Label>هاتف التواصل للدفع</Label>
+          <Input
+            name="contactPhone"
+            defaultValue={settings.contactPhone}
+            dir="ltr"
+          />
+        </div>
+        <div>
           <Label>الحد الأقصى للرفع (MB)</Label>
           <Input
             type="number"

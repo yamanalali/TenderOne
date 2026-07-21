@@ -208,9 +208,6 @@ export default async function TemplatesPage({
                 <CardDescription className="mt-2">
                   {product.descriptionAr}
                 </CardDescription>
-                <p className="mt-4 font-bold text-teal-800">
-                  {product.price} {product.currency}
-                </p>
                 <div className="mt-4 flex gap-2">
                   {unlocked ? (
                     <Link href={`/templates/${product.id}/download`}>

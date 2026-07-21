@@ -90,6 +90,8 @@ export default async function PaymentsPage({
           bankName={settings.bankName}
           bankAccountName={settings.bankAccountName}
           bankIban={settings.bankIban}
+          contactEmail={settings.contactEmail}
+          contactPhone={settings.contactPhone}
           initialProductId={params.productId}
         />
       )}

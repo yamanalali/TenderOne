@@ -215,7 +215,7 @@ export default async function MyServicesPage() {
                 <div>
                   <CardTitle>{product.nameAr}</CardTitle>
                   <CardDescription>
-                    {order.amount} {order.currency} — {formatDate(order.createdAt)}
+                    {formatDate(order.createdAt)}
                   </CardDescription>
                 </div>
                 <Badge className={meta.className}>{meta.label}</Badge>

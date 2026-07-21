@@ -89,7 +89,9 @@ export async function saveSettingsAction(
     bankName: String(formData.get("bankName") || ""),
     bankAccountName: String(formData.get("bankAccountName") || ""),
     bankIban: String(formData.get("bankIban") || ""),
-    maxUploadMb: Number(formData.get("maxUploadMb") || 50),
+    contactEmail: String(formData.get("contactEmail") || ""),
+    contactPhone: String(formData.get("contactPhone") || ""),
+    maxUploadMb: Number(formData.get("maxUploadMb") || 100),
   };
 
   for (const [key, value] of Object.entries(values)) {
@@ -106,6 +108,7 @@ export async function saveSettingsAction(
   revalidatePath("/admin/settings");
   revalidatePath("/payments");
   revalidatePath("/tenders");
+  revalidatePath("/contact");
   return { success: "تم حفظ الإعدادات" };
 }
 

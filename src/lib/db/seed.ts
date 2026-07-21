@@ -86,27 +86,48 @@ async function seed() {
     await db.insert(products).values([
       {
         type: "analysis_credit",
-        nameAr: "رصيد تحليل دفتر شروط (1 ملف)",
-        nameEn: "Tender document analysis credit",
-        descriptionAr: "تحليل مستقل لملف PDF واحد مع Checklist تلقائية",
-        price: "149.00",
+        nameAr: "باقة تحليل واحد",
+        nameEn: "1 analysis pack",
+        descriptionAr: "تحليل واحد لملفات المناقصة المرتبطة مع Checklist",
+        price: "25.00",
         credits: 1,
+        metadata: { catalogCode: "analysis_1" },
       },
       {
         type: "analysis_credit",
-        nameAr: "باقة تحليل (5 ملفات)",
-        nameEn: "Analysis pack (5 files)",
-        descriptionAr: "خمسة تحليلات مستقلة لدفاتر الشروط",
-        price: "599.00",
-        credits: 5,
+        nameAr: "باقة تحليلان",
+        nameEn: "2 analysis pack",
+        descriptionAr: "تحليلان مستقلان لدفاتر الشروط",
+        price: "45.00",
+        credits: 2,
+        metadata: { catalogCode: "analysis_2" },
+      },
+      {
+        type: "analysis_credit",
+        nameAr: "باقة ثلاثة تحليلات",
+        nameEn: "3 analysis pack",
+        descriptionAr: "ثلاثة تحليلات مستقلة لدفاتر الشروط",
+        price: "65.00",
+        credits: 3,
+        metadata: { catalogCode: "analysis_3" },
+      },
+      {
+        type: "analysis_credit",
+        nameAr: "باقة أربعة تحليلات",
+        nameEn: "4 analysis pack",
+        descriptionAr: "أربعة تحليلات مستقلة لدفاتر الشروط",
+        price: "85.00",
+        credits: 4,
+        metadata: { catalogCode: "analysis_4" },
       },
       {
         type: "company_profile",
-        nameAr: "منشئ ملف تعريف الشركة",
-        nameEn: "Company profile builder",
-        descriptionAr: "إنشاء ملف تعريفي احترافي بالعربية أو الإنجليزية",
-        price: "199.00",
+        nameAr: "تجهيز ملف الشركة الأساسي",
+        nameEn: "Company profile",
+        descriptionAr: "إنشاء ملف تعريفي احترافي للشركة",
+        price: "15.00",
         credits: 0,
+        metadata: { catalogCode: "company_profile" },
       },
       {
         type: "service",
@@ -114,16 +135,61 @@ async function seed() {
         nameEn: "Business documents pack",
         descriptionAr:
           "منشئ تفاعلي لـ 12 تصميماً: بروفايل، عرض سعر، فاتورة، وعرض خدمات — مع معاينة وطباعة PDF",
-        price: "299.00",
+        price: "50.00",
         credits: 0,
-        metadata: { serviceCode: "documents_pack" },
+        metadata: {
+          catalogCode: "documents_pack",
+          serviceCode: "documents_pack",
+        },
+      },
+      {
+        type: "service",
+        nameAr: "تعبئة نموذج بسيط (1–2 صفحة)",
+        nameEn: "Simple form filling",
+        descriptionAr: "خدمة يدوية لتعبئة نموذج بسيط حسب متطلبات المناقصة",
+        price: "25.00",
+        metadata: { catalogCode: "form_simple", fulfillment: "manual" },
+      },
+      {
+        type: "service",
+        nameAr: "تعبئة نموذج متوسط (3–5 صفحات)",
+        nameEn: "Medium form filling",
+        descriptionAr: "خدمة يدوية لتعبئة نموذج متوسط حسب المطلوب",
+        price: "35.00",
+        metadata: { catalogCode: "form_medium", fulfillment: "manual" },
+      },
+      {
+        type: "service",
+        nameAr: "تعبئة نموذج معقد (أكثر من 5 صفحات)",
+        nameEn: "Complex form filling",
+        descriptionAr: "خدمة يدوية لتعبئة نموذج معقد حسب المطلوب",
+        price: "50.00",
+        metadata: { catalogCode: "form_complex", fulfillment: "manual" },
+      },
+      {
+        type: "service",
+        nameAr: "مراجعة نهائية لملف المناقصة قبل التقديم",
+        nameEn: "Final tender review",
+        descriptionAr:
+          "مراجعة يدوية لملفات المناقصة قبل التقديم وتنبيه الشركة عند وجود نقص",
+        price: "25.00",
+        metadata: { catalogCode: "final_review", fulfillment: "manual" },
+      },
+      {
+        type: "service",
+        nameAr: "تجهيز ملف مناقصة كامل",
+        nameEn: "Full tender preparation",
+        descriptionAr:
+          "تحضير المناقصة من البداية للنهاية حسب الملفات المستلمة وضمان الامتثال",
+        price: "150.00",
+        metadata: { catalogCode: "full_tender", fulfillment: "manual" },
       },
       {
         type: "template",
         nameAr: "نموذج طلب شراء",
         nameEn: "Purchase request template",
         descriptionAr: "نموذج احترافي جاهز لطلب الشراء",
-        price: "49.00",
+        price: "25.00",
         metadata: { templateCode: "purchase_request" },
       },
       {
@@ -131,7 +197,7 @@ async function seed() {
         nameAr: "نموذج طلب عرض سعر",
         nameEn: "RFQ template",
         descriptionAr: "نموذج طلب عرض سعر",
-        price: "49.00",
+        price: "25.00",
         metadata: { templateCode: "rfq" },
       },
       {
@@ -139,7 +205,7 @@ async function seed() {
         nameAr: "نموذج مقارنة عروض الأسعار",
         nameEn: "Quote comparison template",
         descriptionAr: "نموذج مقارنة عروض الأسعار",
-        price: "59.00",
+        price: "25.00",
         metadata: { templateCode: "quote_comparison" },
       },
       {
@@ -147,7 +213,7 @@ async function seed() {
         nameAr: "نموذج طلب دفعة",
         nameEn: "Payment request template",
         descriptionAr: "نموذج طلب دفعة",
-        price: "49.00",
+        price: "25.00",
         metadata: { templateCode: "payment_request" },
       },
       {
@@ -155,7 +221,7 @@ async function seed() {
         nameAr: "نموذج تقييم المورد",
         nameEn: "Supplier evaluation template",
         descriptionAr: "نموذج تقييم المورد",
-        price: "59.00",
+        price: "25.00",
         metadata: { templateCode: "supplier_evaluation" },
       },
       {
@@ -163,7 +229,7 @@ async function seed() {
         nameAr: "محضر استلام",
         nameEn: "Receiving minutes template",
         descriptionAr: "نموذج محضر استلام",
-        price: "49.00",
+        price: "25.00",
         metadata: { templateCode: "receiving_minutes" },
       },
       {
@@ -171,31 +237,11 @@ async function seed() {
         nameAr: "إغلاق العملية",
         nameEn: "Process closure template",
         descriptionAr: "نموذج إغلاق العملية",
-        price: "49.00",
+        price: "25.00",
         metadata: { templateCode: "process_closure" },
       },
     ]);
     console.log("Seeded products and templates");
-  } else {
-    const existingPack = existingProducts.find(
-      (p) =>
-        p.type === "service" &&
-        (p.metadata as { serviceCode?: string } | null)?.serviceCode ===
-          "documents_pack",
-    );
-    if (!existingPack) {
-      await db.insert(products).values({
-        type: "service",
-        nameAr: "باقة النماذج المؤسسية",
-        nameEn: "Business documents pack",
-        descriptionAr:
-          "منشئ تفاعلي لـ 12 تصميماً: بروفايل، عرض سعر، فاتورة، وعرض خدمات — مع معاينة وطباعة PDF",
-        price: "299.00",
-        credits: 0,
-        metadata: { serviceCode: "documents_pack" },
-      });
-      console.log("Seeded documents pack product");
-    }
   }
 
   const existingDocTemplates = await db.select().from(documentTemplates);

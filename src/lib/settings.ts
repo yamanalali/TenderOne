@@ -9,6 +9,8 @@ export type AppSettings = {
   bankName: string;
   bankAccountName: string;
   bankIban: string;
+  contactEmail: string;
+  contactPhone: string;
   maxUploadMb: number;
 };
 
@@ -18,7 +20,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   bankName: "مصرف تجريبي",
   bankAccountName: "TenderOne",
   bankIban: "SA00 0000 0000 0000 0000 0000",
-  maxUploadMb: 50,
+  contactEmail: "ismailkasem2004@gmail.com",
+  contactPhone: "+90 538 682 01 90",
+  maxUploadMb: 100,
 };
 
 export async function getAppSettings(): Promise<AppSettings> {
@@ -33,6 +37,8 @@ export async function getAppSettings(): Promise<AppSettings> {
         map.bankAccountName ?? DEFAULT_SETTINGS.bankAccountName,
       ),
       bankIban: String(map.bankIban ?? DEFAULT_SETTINGS.bankIban),
+      contactEmail: String(map.contactEmail ?? DEFAULT_SETTINGS.contactEmail),
+      contactPhone: String(map.contactPhone ?? DEFAULT_SETTINGS.contactPhone),
       maxUploadMb: Number(map.maxUploadMb ?? DEFAULT_SETTINGS.maxUploadMb),
     };
   } catch {

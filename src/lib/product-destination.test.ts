@@ -31,4 +31,14 @@ describe("getProductDestination", () => {
     });
     assert.equal(destination.href, "/templates");
   });
+
+  it("routes manual services to my-services", () => {
+    const destination = getProductDestination({
+      id: "m1",
+      type: "service",
+      metadata: { fulfillment: "manual", catalogCode: "final_review" },
+    });
+    assert.equal(destination.href, "/my-services");
+    assert.match(destination.description, /يدوياً/);
+  });
 });
