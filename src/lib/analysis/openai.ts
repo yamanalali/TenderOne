@@ -10,8 +10,14 @@ import {
 } from "@/lib/analysis/types";
 import { getGlobalOpenAIConfig } from "@/lib/settings";
 
-/** Pages per synthetic chunk when a single PDF exceeds model context. */
-const PAGES_PER_ANALYSIS_CHUNK = 45;
+/**
+ * Keep chunks small: Hobby/lower OpenAI tiers often cap ~30k TPM per request.
+ * Dense Arabic tender PDFs can exceed that around ~12–15 pages with images.
+ */
+const PAGES_PER_ANALYSIS_CHUNK = 10;
+const PAGES_PER_ANALYSIS_CHUNK_RETRY = 6;
+/** Pause between model calls so TPM budgets can recover. */
+const STAGE_PAUSE_MS = 2000;
 
 type AnalysisFileInput = {
   fileUrl: string;
@@ -25,6 +31,10 @@ function isBlobSourcePathname(pathname?: string): boolean {
   if (pathname.startsWith("openai:")) return false;
   if (pathname.startsWith("file-")) return false;
   return pathname.includes("/") || pathname.startsWith("analysis");
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const SYSTEM_PROMPT = `أنت محلل خبير لدفاتر شروط المناقصات والصفقات العمومية (عربي/فرنسي/إنجليزي).
@@ -70,6 +80,16 @@ function isContextOverflowError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /context window|context_length|maximum context|too many tokens|input.*too large/i.test(
     message,
+  );
+}
+
+function isTokenBudgetError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    isContextOverflowError(error) ||
+    /429|rate limit|tokens per min|\bTPM\b|Request too large|reduce.*tokens/i.test(
+      message,
+    )
   );
 }
 
@@ -220,32 +240,54 @@ async function runStructuredStage<T>(opts: {
   instruction: string;
   schema: Record<string, unknown>;
 }): Promise<T> {
-  const response = await opts.client.responses.create({
-    model: opts.model,
-    input: [
-      {
-        role: "system",
-        content: [{ type: "input_text", text: SYSTEM_PROMPT }],
-      },
-      {
-        role: "user",
-        content: [
-          { type: "input_text", text: opts.instruction },
-          ...(opts.fileContents as never[]),
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await opts.client.responses.create({
+        model: opts.model,
+        input: [
+          {
+            role: "system",
+            content: [{ type: "input_text", text: SYSTEM_PROMPT }],
+          },
+          {
+            role: "user",
+            content: [
+              { type: "input_text", text: opts.instruction },
+              ...(opts.fileContents as never[]),
+            ],
+          },
         ],
-      },
-    ],
-    text: {
-      format: {
-        type: "json_schema",
-        name: opts.name,
-        strict: true,
-        schema: opts.schema,
-      },
-    },
-  });
+        text: {
+          format: {
+            type: "json_schema",
+            name: opts.name,
+            strict: true,
+            schema: opts.schema,
+          },
+        },
+      });
 
-  return JSON.parse(response.output_text) as T;
+      return JSON.parse(response.output_text) as T;
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      // Soft rate-limit: wait and retry same payload. Hard "Request too large"
+      // must be handled by smaller PDF chunks upstream.
+      if (
+        /429|rate limit|tokens per min|\bTPM\b/i.test(message) &&
+        !/Request too large/i.test(message) &&
+        attempt < 2
+      ) {
+        await sleep(STAGE_PAUSE_MS * (attempt + 2));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("فشل طلب التحليل بعد عدة محاولات");
 }
 
 function toFileContent(
@@ -296,15 +338,6 @@ function mergeChecklistItems(
     }
   }
   return merged;
-}
-
-function preferText(
-  primary: string | null | undefined,
-  fallback: string | null | undefined,
-): string | null {
-  if (primary && primary.trim()) return primary;
-  if (fallback && fallback.trim()) return fallback;
-  return null;
 }
 
 function mergeExtraction(parts: {
@@ -529,6 +562,7 @@ async function analyzeFilesTogether(opts: {
     fileContents,
     filesNote,
   });
+  await sleep(STAGE_PAUSE_MS);
 
   await opts.onProgress?.(40, "استخراج طريقة التقديم");
   const submission = await extractSubmission({
@@ -537,6 +571,7 @@ async function analyzeFilesTogether(opts: {
     fileContents,
     filesNote,
   });
+  await sleep(STAGE_PAUSE_MS);
 
   await opts.onProgress?.(60, "استخراج المطلوبات والقائمة");
   const checklist = await extractChecklist({
@@ -545,6 +580,7 @@ async function analyzeFilesTogether(opts: {
     fileContents,
     filesNote,
   });
+  await sleep(STAGE_PAUSE_MS);
 
   const draft = mergeExtraction({
     tenderInfo: header.tenderInfo,
@@ -609,6 +645,7 @@ async function analyzeFilesChunked(opts: {
       `تحليل مجزأ: ${file.fileName} (${index + 1}/${opts.files.length})`,
     );
 
+    // Header + submission only from the first chunk to stay under TPM caps.
     if (!tenderInfo) {
       const header = await extractHeader({
         client: opts.client,
@@ -618,43 +655,8 @@ async function analyzeFilesChunked(opts: {
       });
       tenderInfo = header.tenderInfo;
       summary = header.summary;
-    } else {
-      // Enrich null header fields from later files when possible.
-      try {
-        const header = await extractHeader({
-          client: opts.client,
-          model: opts.model,
-          fileContents,
-          filesNote,
-        });
-        tenderInfo = {
-          agency: preferText(tenderInfo.agency, header.tenderInfo.agency),
-          referenceNumber: preferText(
-            tenderInfo.referenceNumber,
-            header.tenderInfo.referenceNumber,
-          ),
-          deadline: preferText(tenderInfo.deadline, header.tenderInfo.deadline),
-          executionDuration: preferText(
-            tenderInfo.executionDuration,
-            header.tenderInfo.executionDuration,
-          ),
-          guarantees: preferText(
-            tenderInfo.guarantees,
-            header.tenderInfo.guarantees,
-          ),
-          currency: preferText(tenderInfo.currency, header.tenderInfo.currency),
-          bidValidity: preferText(
-            tenderInfo.bidValidity,
-            header.tenderInfo.bidValidity,
-          ),
-        };
-        summary = preferText(summary, header.summary);
-      } catch (error) {
-        if (!isContextOverflowError(error)) throw error;
-      }
-    }
+      await sleep(STAGE_PAUSE_MS);
 
-    if (!submissionMethod) {
       const submission = await extractSubmission({
         client: opts.client,
         model: opts.model,
@@ -662,6 +664,7 @@ async function analyzeFilesChunked(opts: {
         filesNote,
       });
       submissionMethod = submission.submissionMethod;
+      await sleep(STAGE_PAUSE_MS);
     }
 
     const checklist = await extractChecklist({
@@ -671,6 +674,7 @@ async function analyzeFilesChunked(opts: {
       filesNote,
     });
     checklistParts.push(checklist);
+    await sleep(STAGE_PAUSE_MS);
   }
 
   if (!tenderInfo || !submissionMethod) {
@@ -897,11 +901,14 @@ export async function analyzePdfWithOpenAI(input: {
       onProgress: input.onProgress,
     });
   } catch (error) {
-    if (!isContextOverflowError(error)) {
+    if (!isTokenBudgetError(error)) {
       throw error;
     }
 
-    await input.onProgress?.(18, "الملف كبير — تقسيم وتحليل مجزأ");
+    await input.onProgress?.(
+      18,
+      "الطلب أكبر من حد التوكنات — إعادة التقسيم بأجزاء أصغر",
+    );
 
     try {
       const expanded: AnalysisFileInput[] = [];
@@ -909,6 +916,7 @@ export async function analyzePdfWithOpenAI(input: {
         const parts = await splitPdfIntoOpenAIChunks({
           client,
           file,
+          pagesPerChunk: PAGES_PER_ANALYSIS_CHUNK_RETRY,
         });
         expanded.push(...parts);
       }
@@ -921,7 +929,7 @@ export async function analyzePdfWithOpenAI(input: {
       });
     } catch (retryError) {
       if (
-        isContextOverflowError(retryError) ||
+        isTokenBudgetError(retryError) ||
         (retryError instanceof Error &&
           /user_data|لا يمكن تقسيم|تعذر الوصول/i.test(retryError.message))
       ) {
@@ -929,7 +937,7 @@ export async function analyzePdfWithOpenAI(input: {
           retryError instanceof Error &&
             /أعد رفع|لا يمكن تقسيم|تعذر الوصول/i.test(retryError.message)
             ? retryError.message
-            : "الملف أكبر من نافذة سياق النموذج. أعد رفع الـ PDF (تحليل جديد) ليتم تقسيمه تلقائياً من التخزين، أو قسّمه يدوياً إلى ملفات 40–60 صفحة، أو استخدم نموذجاً أكبر مثل gpt-4.1.",
+            : "تجاوز حد توكنات OpenAI (TPM). أعد رفع الملف في تحليل جديد، أو ارفع أجزاء أصغر (10 صفحات تقريباً)، أو ارفع حد الحساب من platform.openai.com/account/rate-limits، أو استخدم نموذجاً بحد أعلى.",
         );
       }
       throw retryError;
