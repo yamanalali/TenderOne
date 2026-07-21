@@ -29,11 +29,13 @@ export async function runAnalysisPipeline(analysisId: string) {
       ? linkedFiles.map((file) => ({
           fileUrl: file.fileUrl,
           fileName: file.fileName,
+          sourcePathname: file.filePathname,
         }))
       : [
           {
             fileUrl: analysis.fileUrl,
             fileName: analysis.fileName,
+            sourcePathname: analysis.filePathname,
           },
         ];
 

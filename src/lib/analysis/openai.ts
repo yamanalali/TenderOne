@@ -1,3 +1,4 @@
+import { get } from "@vercel/blob";
 import OpenAI, { toFile } from "openai";
 import { PDFDocument } from "pdf-lib";
 import {
@@ -11,6 +12,20 @@ import { getGlobalOpenAIConfig } from "@/lib/settings";
 
 /** Pages per synthetic chunk when a single PDF exceeds model context. */
 const PAGES_PER_ANALYSIS_CHUNK = 45;
+
+type AnalysisFileInput = {
+  fileUrl: string;
+  fileName: string;
+  /** Vercel Blob pathname for re-download (OpenAI user_data files are not downloadable). */
+  sourcePathname?: string;
+};
+
+function isBlobSourcePathname(pathname?: string): boolean {
+  if (!pathname) return false;
+  if (pathname.startsWith("openai:")) return false;
+  if (pathname.startsWith("file-")) return false;
+  return pathname.includes("/") || pathname.startsWith("analysis");
+}
 
 const SYSTEM_PROMPT = `أنت محلل خبير لدفاتر شروط المناقصات والصفقات العمومية (عربي/فرنسي/إنجليزي).
 استخرج فقط ما هو موجود فعلياً في الملف. لا تختلق أرقاماً أو جهات أو مواعيد.
@@ -708,40 +723,56 @@ async function analyzeFilesChunked(opts: {
   }
 }
 
-async function downloadPdfBytes(
-  client: OpenAI,
-  fileUrl: string,
-): Promise<Uint8Array> {
-  if (fileUrl.startsWith("openai:")) {
-    const fileId = fileUrl.slice("openai:".length);
-    const content = await client.files.content(fileId);
-    return new Uint8Array(await content.arrayBuffer());
+async function downloadPdfBytesForSplit(opts: {
+  fileUrl: string;
+  sourcePathname?: string;
+}): Promise<Uint8Array> {
+  // Prefer Vercel Blob — OpenAI rejects downloads for purpose=user_data.
+  if (isBlobSourcePathname(opts.sourcePathname)) {
+    const result = await get(opts.sourcePathname!, { access: "private" });
+    if (result?.stream) {
+      return new Uint8Array(await new Response(result.stream).arrayBuffer());
+    }
   }
 
-  const response = await fetch(fileUrl);
-  if (!response.ok) {
-    throw new Error("تعذر تنزيل ملف PDF لتقسيمه قبل التحليل");
+  if (opts.fileUrl.startsWith("openai:")) {
+    throw new Error(
+      "لا يمكن تقسيم هذا الملف تلقائياً لأنه رُفع سابقاً بدون مسار Blob. أعد رفع الـ PDF من صفحة تحليل جديد ثم شغّل التحليل مجدداً.",
+    );
   }
-  return new Uint8Array(await response.arrayBuffer());
+
+  if (opts.fileUrl.startsWith("http://") || opts.fileUrl.startsWith("https://")) {
+    const response = await fetch(opts.fileUrl);
+    if (!response.ok) {
+      throw new Error("تعذر تنزيل ملف PDF لتقسيمه قبل التحليل");
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  throw new Error(
+    "تعذر الوصول إلى ملف PDF للتقسيم. أعد رفع الملف من صفحة تحليل جديد.",
+  );
 }
 
 /** Split one large PDF into page-range chunks uploaded back to OpenAI Files. */
 async function splitPdfIntoOpenAIChunks(opts: {
   client: OpenAI;
-  fileUrl: string;
-  fileName: string;
+  file: AnalysisFileInput;
   pagesPerChunk?: number;
-}): Promise<Array<{ fileUrl: string; fileName: string }>> {
+}): Promise<AnalysisFileInput[]> {
   const pagesPerChunk = opts.pagesPerChunk ?? PAGES_PER_ANALYSIS_CHUNK;
-  const bytes = await downloadPdfBytes(opts.client, opts.fileUrl);
+  const bytes = await downloadPdfBytesForSplit({
+    fileUrl: opts.file.fileUrl,
+    sourcePathname: opts.file.sourcePathname,
+  });
   const source = await PDFDocument.load(bytes, { ignoreEncryption: true });
   const totalPages = source.getPageCount();
 
   if (totalPages <= pagesPerChunk) {
-    return [{ fileUrl: opts.fileUrl, fileName: opts.fileName }];
+    return [opts.file];
   }
 
-  const chunks: Array<{ fileUrl: string; fileName: string }> = [];
+  const chunks: AnalysisFileInput[] = [];
   for (let start = 0; start < totalPages; start += pagesPerChunk) {
     const end = Math.min(start + pagesPerChunk, totalPages);
     const part = await PDFDocument.create();
@@ -758,7 +789,7 @@ async function splitPdfIntoOpenAIChunks(opts: {
     const uploaded = await opts.client.files.create({
       file: await toFile(
         partBytes,
-        `${opts.fileName.replace(/\.pdf$/i, "")}-p${start + 1}-${end}.pdf`,
+        `${opts.file.fileName.replace(/\.pdf$/i, "")}-p${start + 1}-${end}.pdf`,
         { type: "application/pdf" },
       ),
       purpose: "user_data",
@@ -766,24 +797,62 @@ async function splitPdfIntoOpenAIChunks(opts: {
 
     chunks.push({
       fileUrl: `openai:${uploaded.id}`,
-      fileName: `${opts.fileName} (صفحات ${start + 1}–${end})`,
+      fileName: `${opts.file.fileName} (صفحات ${start + 1}–${end})`,
     });
   }
 
   return chunks;
 }
 
+async function expandFilesForLargePdfs(opts: {
+  client: OpenAI;
+  files: AnalysisFileInput[];
+  onProgress?: StageProgress;
+}): Promise<AnalysisFileInput[]> {
+  const expanded: AnalysisFileInput[] = [];
+  for (const file of opts.files) {
+    if (!isBlobSourcePathname(file.sourcePathname)) {
+      expanded.push(file);
+      continue;
+    }
+
+    try {
+      const parts = await splitPdfIntoOpenAIChunks({
+        client: opts.client,
+        file,
+      });
+      if (parts.length > 1) {
+        await opts.onProgress?.(
+          16,
+          `تقسيم ${file.fileName} إلى ${parts.length} أجزاء`,
+        );
+      }
+      expanded.push(...parts);
+    } catch {
+      expanded.push(file);
+    }
+  }
+  return expanded;
+}
+
 export async function analyzePdfWithOpenAI(input: {
   fileUrl?: string;
   fileName?: string;
-  files?: Array<{ fileUrl: string; fileName: string }>;
+  sourcePathname?: string;
+  files?: AnalysisFileInput[];
   onProgress?: StageProgress;
 }): Promise<AnalysisExtraction> {
-  const files =
+  const files: AnalysisFileInput[] =
     input.files && input.files.length > 0
       ? input.files
       : input.fileUrl && input.fileName
-        ? [{ fileUrl: input.fileUrl, fileName: input.fileName }]
+        ? [
+            {
+              fileUrl: input.fileUrl,
+              fileName: input.fileName,
+              sourcePathname: input.sourcePathname,
+            },
+          ]
         : [];
 
   const config = await getGlobalOpenAIConfig();
@@ -802,11 +871,29 @@ export async function analyzePdfWithOpenAI(input: {
   const client = new OpenAI({ apiKey: config.apiKey });
   const model = config.model;
 
+  // Proactively split very large PDFs from Blob before the first model call.
+  const preparedFiles = await expandFilesForLargePdfs({
+    client,
+    files,
+    onProgress: input.onProgress,
+  });
+
+  const runTogether = preparedFiles.length === files.length;
+
   try {
+    if (!runTogether) {
+      return await analyzeFilesChunked({
+        client,
+        model,
+        files: preparedFiles,
+        onProgress: input.onProgress,
+      });
+    }
+
     return await analyzeFilesTogether({
       client,
       model,
-      files,
+      files: preparedFiles,
       onProgress: input.onProgress,
     });
   } catch (error) {
@@ -817,30 +904,32 @@ export async function analyzePdfWithOpenAI(input: {
     await input.onProgress?.(18, "الملف كبير — تقسيم وتحليل مجزأ");
 
     try {
-      let workFiles = files;
-
-      // Split every oversized source PDF into page-range chunks.
-      const expanded: Array<{ fileUrl: string; fileName: string }> = [];
+      const expanded: AnalysisFileInput[] = [];
       for (const file of files) {
         const parts = await splitPdfIntoOpenAIChunks({
           client,
-          fileUrl: file.fileUrl,
-          fileName: file.fileName,
+          file,
         });
         expanded.push(...parts);
       }
-      workFiles = expanded;
 
       return await analyzeFilesChunked({
         client,
         model,
-        files: workFiles,
+        files: expanded,
         onProgress: input.onProgress,
       });
     } catch (retryError) {
-      if (isContextOverflowError(retryError)) {
+      if (
+        isContextOverflowError(retryError) ||
+        (retryError instanceof Error &&
+          /user_data|لا يمكن تقسيم|تعذر الوصول/i.test(retryError.message))
+      ) {
         throw new Error(
-          "الملف أكبر من نافذة سياق نموذج الذكاء الاصطناعي الحالي. قسّم دفتر الشروط إلى عدة ملفات PDF (مثلاً كل ملف 40–60 صفحة) وارفعها معاً في نفس التحليل، أو غيّر النموذج في إعدادات الإدارة إلى gpt-4.1 / gpt-4o.",
+          retryError instanceof Error &&
+            /أعد رفع|لا يمكن تقسيم|تعذر الوصول/i.test(retryError.message)
+            ? retryError.message
+            : "الملف أكبر من نافذة سياق النموذج. أعد رفع الـ PDF (تحليل جديد) ليتم تقسيمه تلقائياً من التخزين، أو قسّمه يدوياً إلى ملفات 40–60 صفحة، أو استخدم نموذجاً أكبر مثل gpt-4.1.",
         );
       }
       throw retryError;

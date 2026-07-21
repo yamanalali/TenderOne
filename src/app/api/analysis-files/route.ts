@@ -50,7 +50,19 @@ async function ingestFromBlob(input: {
     );
   }
 
-  return uploadBytesToOpenAI(bytes, input.fileName, input.apiKey);
+  const openai = await uploadBytesToOpenAI(
+    bytes,
+    input.fileName,
+    input.apiKey,
+  );
+
+  // Keep Blob pathname so large-PDF splitting can re-download later.
+  // OpenAI forbids downloading files with purpose user_data.
+  return {
+    url: openai.url,
+    pathname: input.pathname,
+    fileName: input.fileName,
+  };
 }
 
 export async function POST(request: Request) {
