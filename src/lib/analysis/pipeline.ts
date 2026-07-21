@@ -1,13 +1,30 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { analyses, analysisFiles, checklistItems } from "@/lib/db/schema";
-import { analyzePdfWithOpenAI } from "@/lib/analysis/openai";
+import {
+  analyzePdfWithOpenAI,
+  isAnalysisChunkJob,
+  type AnalysisChunkJob,
+} from "@/lib/analysis/openai";
 import {
   SECTION_LABELS,
   type AnalysisExtraction,
 } from "@/lib/analysis/types";
 
-export async function runAnalysisPipeline(analysisId: string) {
+export type PipelineRunResult = {
+  continued: boolean;
+  progress: number;
+};
+
+function readChunkJob(extractedData: unknown): AnalysisChunkJob | null {
+  if (!extractedData || typeof extractedData !== "object") return null;
+  const job = (extractedData as { _chunkJob?: unknown })._chunkJob;
+  return isAnalysisChunkJob(job) ? job : null;
+}
+
+export async function runAnalysisPipeline(
+  analysisId: string,
+): Promise<PipelineRunResult> {
   const [analysis] = await db
     .select()
     .from(analyses)
@@ -39,19 +56,24 @@ export async function runAnalysisPipeline(analysisId: string) {
           },
         ];
 
+  const existingJob = readChunkJob(analysis.extractedData);
+
   await db
     .update(analyses)
-    .set({ status: "processing", progress: 10, updatedAt: new Date() })
+    .set({
+      status: "processing",
+      progress: existingJob
+        ? 15 + Math.round((existingJob.nextIndex / Math.max(existingJob.chunks.length, 1)) * 60)
+        : 10,
+      updatedAt: new Date(),
+      errorMessage: null,
+    })
     .where(eq(analyses.id, analysisId));
 
   try {
-    await db
-      .update(analyses)
-      .set({ progress: 35, updatedAt: new Date() })
-      .where(eq(analyses.id, analysisId));
-
-    const extracted = await analyzePdfWithOpenAI({
+    const result = await analyzePdfWithOpenAI({
       files,
+      job: existingJob,
       onProgress: async (progress) => {
         await db
           .update(analyses)
@@ -59,6 +81,23 @@ export async function runAnalysisPipeline(analysisId: string) {
           .where(eq(analyses.id, analysisId));
       },
     });
+
+    if (result.status === "continue") {
+      await db
+        .update(analyses)
+        .set({
+          status: "processing",
+          progress: result.progress,
+          extractedData: { _chunkJob: result.job },
+          updatedAt: new Date(),
+          errorMessage: null,
+        })
+        .where(eq(analyses.id, analysisId));
+
+      return { continued: true, progress: result.progress };
+    }
+
+    const extracted = result.extraction;
 
     await db
       .update(analyses)
@@ -80,7 +119,7 @@ export async function runAnalysisPipeline(analysisId: string) {
       })
       .where(eq(analyses.id, analysisId));
 
-    return extracted;
+    return { continued: false, progress: 100 };
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "فشل تحليل الملف";

@@ -1,7 +1,20 @@
+import { after } from "next/server";
 import { NextResponse } from "next/server";
-import { analyzeTenderDocumentWorkflow } from "@/workflows/analyze-tender-document";
+import { runAnalysisPipeline } from "@/lib/analysis/pipeline";
 
 export const maxDuration = 300;
+
+function processUrl(analysisId: string) {
+  const base =
+    process.env.NEXT_PUBLIC_APP_URL ||
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : null) ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
+    "http://localhost:3000";
+
+  return `${base.replace(/\/$/, "")}/api/analyses/${analysisId}/process`;
+}
 
 export async function POST(
   request: Request,
@@ -14,11 +27,31 @@ export async function POST(
 
   const { id } = await context.params;
 
-  // Do not await the whole pipeline in the response path when possible.
-  // For reliability in this app we await within maxDuration.
   try {
-    await analyzeTenderDocumentWorkflow(id);
-    return NextResponse.json({ ok: true });
+    const result = await runAnalysisPipeline(id);
+
+    // Long PDFs: chain another invocation after this batch finishes.
+    if (result.continued) {
+      after(async () => {
+        try {
+          await fetch(processUrl(id), {
+            method: "POST",
+            headers: {
+              "x-internal-secret": process.env.AUTH_SECRET || "dev-secret",
+            },
+            cache: "no-store",
+          });
+        } catch (error) {
+          console.error("Failed to continue analysis batch", id, error);
+        }
+      });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      continued: result.continued,
+      progress: result.progress,
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed" },

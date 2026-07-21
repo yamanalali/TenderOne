@@ -17,7 +17,13 @@ import { getGlobalOpenAIConfig } from "@/lib/settings";
 const PAGES_PER_ANALYSIS_CHUNK = 5;
 const PAGES_PER_ANALYSIS_CHUNK_RETRY = 5;
 /** Pause between model calls so TPM budgets can recover. */
-const STAGE_PAUSE_MS = 2000;
+const STAGE_PAUSE_MS = 800;
+/**
+ * Process only this many 5-page chunks per serverless invocation.
+ * Long PDFs resume across chained /api/analyses/[id]/process calls
+ * so Vercel's ~300s maxDuration cannot leave the job stuck mid-way.
+ */
+const MAX_CHUNKS_PER_INVOCATION = 5;
 
 type AnalysisFileInput = {
   fileUrl: string;
@@ -75,6 +81,29 @@ const CHECKLIST_KEYS: Array<keyof ChecklistSections> = [
   "rejectionRisks",
   "specialConditions",
 ];
+
+export type AnalysisChunkJob = {
+  kind: "tender_chunk_job_v1";
+  chunks: AnalysisFileInput[];
+  nextIndex: number;
+  checklistParts: ChecklistSections[];
+  tenderInfo: AnalysisExtraction["tenderInfo"] | null;
+  submissionMethod: AnalysisExtraction["submissionMethod"] | null;
+  summary: string | null;
+};
+
+export type AnalysisRunResult =
+  | { status: "completed"; extraction: AnalysisExtraction }
+  | { status: "continue"; job: AnalysisChunkJob; progress: number };
+
+export function isAnalysisChunkJob(value: unknown): value is AnalysisChunkJob {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as AnalysisChunkJob).kind === "tender_chunk_job_v1" &&
+    Array.isArray((value as AnalysisChunkJob).chunks)
+  );
+}
 
 function isContextOverflowError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -622,72 +651,23 @@ async function analyzeFilesTogether(opts: {
   };
 }
 
-/** One-file-at-a-time path for PDFs that exceed a single context window. */
-async function analyzeFilesChunked(opts: {
+async function finalizeChunkedDraft(opts: {
   client: OpenAI;
   model: string;
-  files: Array<{ fileUrl: string; fileName: string }>;
+  job: AnalysisChunkJob;
   onProgress?: StageProgress;
 }): Promise<AnalysisExtraction> {
-  const checklistParts: ChecklistSections[] = [];
-  let tenderInfo: AnalysisExtraction["tenderInfo"] | null = null;
-  let submissionMethod: AnalysisExtraction["submissionMethod"] | null = null;
-  let summary: string | null = null;
-
-  for (let index = 0; index < opts.files.length; index += 1) {
-    const file = opts.files[index]!;
-    const fileContents = [toFileContent(file.fileUrl, "low")];
-    const filesNote = `\nملف ${index + 1}/${opts.files.length}: ${file.fileName}`;
-    const baseProgress = 15 + Math.round((index / opts.files.length) * 55);
-
-    await opts.onProgress?.(
-      baseProgress,
-      `تحليل مجزأ: ${file.fileName} (${index + 1}/${opts.files.length})`,
-    );
-
-    // Header + submission only from the first chunk to stay under TPM caps.
-    if (!tenderInfo) {
-      const header = await extractHeader({
-        client: opts.client,
-        model: opts.model,
-        fileContents,
-        filesNote,
-      });
-      tenderInfo = header.tenderInfo;
-      summary = header.summary;
-      await sleep(STAGE_PAUSE_MS);
-
-      const submission = await extractSubmission({
-        client: opts.client,
-        model: opts.model,
-        fileContents,
-        filesNote,
-      });
-      submissionMethod = submission.submissionMethod;
-      await sleep(STAGE_PAUSE_MS);
-    }
-
-    const checklist = await extractChecklist({
-      client: opts.client,
-      model: opts.model,
-      fileContents,
-      filesNote,
-    });
-    checklistParts.push(checklist);
-    await sleep(STAGE_PAUSE_MS);
-  }
-
-  if (!tenderInfo || !submissionMethod) {
+  if (!opts.job.tenderInfo || !opts.job.submissionMethod) {
     throw new Error(
-      "تعذر استخراج بيانات المناقصة من الملف الكبير. جرّب تقسيم PDF إلى أجزاء أصغر (مثلاً 40–60 صفحة) أو استخدم نموذجاً بسياق أكبر مثل gpt-4.1.",
+      "تعذر استخراج بيانات المناقصة من الملف الكبير. أعد رفع الملف أو قسّمه يدوياً.",
     );
   }
 
   const draft = mergeExtraction({
-    tenderInfo,
-    submissionMethod,
-    checklist: mergeChecklistItems(checklistParts),
-    summary,
+    tenderInfo: opts.job.tenderInfo,
+    submissionMethod: opts.job.submissionMethod,
+    checklist: mergeChecklistItems(opts.job.checklistParts),
+    summary: opts.job.summary,
   });
 
   await opts.onProgress?.(85, "مراجعة النتائج المدمجة");
@@ -721,10 +701,92 @@ async function analyzeFilesChunked(opts: {
         : reviewed.summary,
     };
   } catch {
-    // If review itself fails (huge checklist), return the merged draft.
     const confidence = resolveConfidence(draft, draft.confidence);
     return { ...draft, confidence };
   }
+}
+
+/** Process a limited batch of page-chunks; returns continue for long PDFs. */
+async function analyzeFilesChunked(opts: {
+  client: OpenAI;
+  model: string;
+  files?: Array<{ fileUrl: string; fileName: string }>;
+  job?: AnalysisChunkJob;
+  onProgress?: StageProgress;
+  maxChunks?: number;
+}): Promise<AnalysisRunResult> {
+  const job: AnalysisChunkJob = opts.job ?? {
+    kind: "tender_chunk_job_v1",
+    chunks: opts.files ?? [],
+    nextIndex: 0,
+    checklistParts: [],
+    tenderInfo: null,
+    submissionMethod: null,
+    summary: null,
+  };
+
+  if (job.chunks.length === 0) {
+    throw new Error("لا توجد أجزاء PDF للتحليل");
+  }
+
+  const maxChunks = opts.maxChunks ?? MAX_CHUNKS_PER_INVOCATION;
+  const end = Math.min(job.nextIndex + maxChunks, job.chunks.length);
+
+  for (let index = job.nextIndex; index < end; index += 1) {
+    const file = job.chunks[index]!;
+    const fileContents = [toFileContent(file.fileUrl, "low")];
+    const filesNote = `\nملف ${index + 1}/${job.chunks.length}: ${file.fileName}`;
+    const baseProgress = 15 + Math.round((index / job.chunks.length) * 60);
+
+    await opts.onProgress?.(
+      baseProgress,
+      `تحليل مجزأ: ${file.fileName} (${index + 1}/${job.chunks.length})`,
+    );
+
+    if (!job.tenderInfo) {
+      const header = await extractHeader({
+        client: opts.client,
+        model: opts.model,
+        fileContents,
+        filesNote,
+      });
+      job.tenderInfo = header.tenderInfo;
+      job.summary = header.summary;
+      await sleep(STAGE_PAUSE_MS);
+
+      const submission = await extractSubmission({
+        client: opts.client,
+        model: opts.model,
+        fileContents,
+        filesNote,
+      });
+      job.submissionMethod = submission.submissionMethod;
+      await sleep(STAGE_PAUSE_MS);
+    }
+
+    const checklist = await extractChecklist({
+      client: opts.client,
+      model: opts.model,
+      fileContents,
+      filesNote,
+    });
+    job.checklistParts.push(checklist);
+    job.nextIndex = index + 1;
+    await sleep(STAGE_PAUSE_MS);
+  }
+
+  if (job.nextIndex < job.chunks.length) {
+    const progress = 15 + Math.round((job.nextIndex / job.chunks.length) * 60);
+    return { status: "continue", job, progress };
+  }
+
+  const extraction = await finalizeChunkedDraft({
+    client: opts.client,
+    model: opts.model,
+    job,
+    onProgress: opts.onProgress,
+  });
+  return { status: "completed", extraction };
 }
 
 async function downloadPdfBytesForSplit(opts: {
@@ -844,8 +906,30 @@ export async function analyzePdfWithOpenAI(input: {
   fileName?: string;
   sourcePathname?: string;
   files?: AnalysisFileInput[];
+  /** Resume state from a previous serverless invocation. */
+  job?: AnalysisChunkJob | null;
   onProgress?: StageProgress;
-}): Promise<AnalysisExtraction> {
+}): Promise<AnalysisRunResult> {
+  const config = await getGlobalOpenAIConfig();
+  const client = new OpenAI({ apiKey: config.apiKey || "missing" });
+  const model = config.model;
+
+  // Resume a multi-invocation chunk job.
+  if (input.job && isAnalysisChunkJob(input.job)) {
+    if (!config.apiKey) {
+      return {
+        status: "completed",
+        extraction: demoExtraction("demo.pdf"),
+      };
+    }
+    return analyzeFilesChunked({
+      client,
+      model,
+      job: input.job,
+      onProgress: input.onProgress,
+    });
+  }
+
   const files: AnalysisFileInput[] =
     input.files && input.files.length > 0
       ? input.files
@@ -859,9 +943,13 @@ export async function analyzePdfWithOpenAI(input: {
           ]
         : [];
 
-  const config = await getGlobalOpenAIConfig();
   if (!config.apiKey) {
-    return demoExtraction(files.map((f) => f.fileName).join(" + ") || "demo.pdf");
+    return {
+      status: "completed",
+      extraction: demoExtraction(
+        files.map((f) => f.fileName).join(" + ") || "demo.pdf",
+      ),
+    };
   }
   if (files.length === 0) {
     throw new Error("لا توجد ملفات للتحليل");
@@ -871,9 +959,6 @@ export async function analyzePdfWithOpenAI(input: {
       "رابط الملف محلي وغير صالح للتحليل. أعد رفع ملفات PDF من صفحة تحليل جديد.",
     );
   }
-
-  const client = new OpenAI({ apiKey: config.apiKey });
-  const model = config.model;
 
   // Proactively split very large PDFs from Blob before the first model call.
   const preparedFiles = await expandFilesForLargePdfs({
@@ -894,12 +979,13 @@ export async function analyzePdfWithOpenAI(input: {
       });
     }
 
-    return await analyzeFilesTogether({
+    const extraction = await analyzeFilesTogether({
       client,
       model,
       files: preparedFiles,
       onProgress: input.onProgress,
     });
+    return { status: "completed", extraction };
   } catch (error) {
     if (!isTokenBudgetError(error)) {
       throw error;
@@ -937,7 +1023,7 @@ export async function analyzePdfWithOpenAI(input: {
           retryError instanceof Error &&
             /أعد رفع|لا يمكن تقسيم|تعذر الوصول/i.test(retryError.message)
             ? retryError.message
-            : "تجاوز حد توكنات OpenAI (TPM). أعد رفع الملف في تحليل جديد، أو ارفع أجزاء أصغر (10 صفحات تقريباً)، أو ارفع حد الحساب من platform.openai.com/account/rate-limits، أو استخدم نموذجاً بحد أعلى.",
+            : "تجاوز حد توكنات OpenAI (TPM). أعد رفع الملف في تحليل جديد، أو ارفع أجزاء أصغر (5 صفحات)، أو ارفع حد الحساب من platform.openai.com/account/rate-limits.",
         );
       }
       throw retryError;

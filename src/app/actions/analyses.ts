@@ -142,6 +142,8 @@ export async function retryAnalysisAction(analysisId: string): Promise<ActionSta
       status: "queued",
       progress: 0,
       errorMessage: null,
+      extractedData: null,
+      completedAt: null,
       updatedAt: new Date(),
     })
     .where(eq(analyses.id, analysisId));
