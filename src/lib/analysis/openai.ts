@@ -12,10 +12,10 @@ import { getGlobalOpenAIConfig } from "@/lib/settings";
 
 /**
  * Keep chunks small: Hobby/lower OpenAI tiers often cap ~30k TPM per request.
- * Dense Arabic tender PDFs can exceed that around ~12–15 pages with images.
+ * Dense Arabic tender PDFs are analyzed in 5-page batches.
  */
-const PAGES_PER_ANALYSIS_CHUNK = 10;
-const PAGES_PER_ANALYSIS_CHUNK_RETRY = 6;
+const PAGES_PER_ANALYSIS_CHUNK = 5;
+const PAGES_PER_ANALYSIS_CHUNK_RETRY = 5;
 /** Pause between model calls so TPM budgets can recover. */
 const STAGE_PAUSE_MS = 2000;
 
