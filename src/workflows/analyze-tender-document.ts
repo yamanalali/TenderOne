@@ -7,11 +7,13 @@ import { runAnalysisPipeline } from "@/lib/analysis/pipeline";
 
 function processUrl(analysisId: string) {
   const base =
-    process.env.NEXT_PUBLIC_APP_URL ||
+    (process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : null) ||
     (process.env.VERCEL_PROJECT_PRODUCTION_URL
       ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
       : null) ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
+    process.env.NEXT_PUBLIC_APP_URL ||
     "http://localhost:3000";
 
   return `${base.replace(/\/$/, "")}/api/analyses/${analysisId}/process`;

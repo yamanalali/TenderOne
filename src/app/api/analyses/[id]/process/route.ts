@@ -4,16 +4,11 @@ import { runAnalysisPipeline } from "@/lib/analysis/pipeline";
 
 export const maxDuration = 300;
 
-function processUrl(analysisId: string) {
-  const base =
-    process.env.NEXT_PUBLIC_APP_URL ||
-    (process.env.VERCEL_PROJECT_PRODUCTION_URL
-      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-      : null) ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
-    "http://localhost:3000";
-
-  return `${base.replace(/\/$/, "")}/api/analyses/${analysisId}/process`;
+function processUrl(request: Request, analysisId: string) {
+  return new URL(
+    `/api/analyses/${analysisId}/process`,
+    request.url,
+  ).toString();
 }
 
 export async function POST(
@@ -34,7 +29,7 @@ export async function POST(
     if (result.continued) {
       after(async () => {
         try {
-          await fetch(processUrl(id), {
+          await fetch(processUrl(request, id), {
             method: "POST",
             headers: {
               "x-internal-secret": process.env.AUTH_SECRET || "dev-secret",

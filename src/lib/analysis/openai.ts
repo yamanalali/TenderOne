@@ -23,7 +23,7 @@ const STAGE_PAUSE_MS = 800;
  * Long PDFs resume across chained /api/analyses/[id]/process calls
  * so Vercel's ~300s maxDuration cannot leave the job stuck mid-way.
  */
-const MAX_CHUNKS_PER_INVOCATION = 5;
+const MAX_CHUNKS_PER_INVOCATION = 1;
 
 type AnalysisFileInput = {
   fileUrl: string;

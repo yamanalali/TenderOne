@@ -129,7 +129,11 @@ export default async function AnalysisDetailPage({
 
   return (
     <div className="mx-auto max-w-7xl space-y-5">
-      <AnalysisPoller status={analysis.status} />
+      <AnalysisPoller
+        analysisId={analysis.id}
+        status={analysis.status}
+        updatedAt={analysis.updatedAt.toISOString()}
+      />
       <BackLink href="/analyses" label="رجوع إلى قائمة التحليلات" />
 
       <section className="relative overflow-hidden rounded-[2rem] bg-[#09182b] px-5 py-6 text-white shadow-[0_24px_70px_rgba(15,23,42,0.16)] sm:px-8 sm:py-8">
