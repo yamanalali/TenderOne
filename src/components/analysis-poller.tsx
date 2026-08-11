@@ -19,9 +19,10 @@ export function AnalysisPoller({
     if (status === "completed" || status === "failed") return;
 
     const refreshTimer = setInterval(() => router.refresh(), 3000);
-    const watchdogTimer = setInterval(async () => {
+    async function resumeIfNeeded() {
       const staleFor = Date.now() - new Date(updatedAt).getTime();
-      if (staleFor < 120_000 || resumeInFlight.current) return;
+      const shouldResume = status === "queued" || staleFor >= 120_000;
+      if (!shouldResume || resumeInFlight.current) return;
 
       resumeInFlight.current = true;
       try {
@@ -33,7 +34,10 @@ export function AnalysisPoller({
       } finally {
         resumeInFlight.current = false;
       }
-    }, 15_000);
+    }
+
+    void resumeIfNeeded();
+    const watchdogTimer = setInterval(resumeIfNeeded, 15_000);
 
     return () => {
       clearInterval(refreshTimer);
